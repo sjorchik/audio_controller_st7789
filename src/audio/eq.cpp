@@ -97,6 +97,9 @@ eq::Processor::Processor(const char* tag)
       rate_(eq_cfg::kDefaultSampleRateHz),
       bypass_(false),
       clips_(0),
+#if EQ_DEBUG
+      dbgPeak_(0.0f),
+#endif
       version_(0),
       seq_(0),
       appliedVer_(0),
@@ -261,6 +264,12 @@ void eq::Processor::resetClipCount() {
     clips_.store(0, std::memory_order_relaxed);
 }
 
+#if EQ_DEBUG
+float eq::Processor::debugTakePeak() {
+    return dbgPeak_.exchange(0.0f, std::memory_order_relaxed);
+}
+#endif
+
 void eq::Processor::zeroBand(uint8_t b) {
     z_[0][b][0] = z_[0][b][1] = 0.0f;
     z_[1][b][0] = z_[1][b][1] = 0.0f;
@@ -375,6 +384,9 @@ void eq::Processor::process(int32_t* buf, int32_t frames) {
     const uint8_t n = bl.n;
 
     uint32_t clips = 0;
+#if EQ_DEBUG
+    float peak = 0.0f;  // [E1] макс. |відлік| ПЕРЕД насиченням у цьому блоці
+#endif
     int32_t* p = buf;
     for (int32_t f = 0; f < frames; ++f) {
         float xl = static_cast<float>(p[0]);
@@ -390,6 +402,14 @@ void eq::Processor::process(int32_t* buf, int32_t frames) {
             bl.zr[i][1] = k.b2 * xr - k.a2 * yr;
             xr = yr;
         }
+#if EQ_DEBUG
+        {
+            const float al = fabsf(xl);
+            const float ar = fabsf(xr);
+            if (al > peak) peak = al;
+            if (ar > peak) peak = ar;
+        }
+#endif
         p[0] = toInt32(xl, clips);
         p[1] = toInt32(xr, clips);
         p += 2;
@@ -399,6 +419,12 @@ void eq::Processor::process(int32_t* buf, int32_t frames) {
     if (clips != 0) {
         clips_.fetch_add(clips, std::memory_order_relaxed);
     }
+#if EQ_DEBUG
+    // Єдина задача-власник пише максимум; звітувач лише скидає його (exchange) — для діагностики цього досить.
+    if (peak > dbgPeak_.load(std::memory_order_relaxed)) {
+        dbgPeak_.store(peak, std::memory_order_relaxed);
+    }
+#endif
 }
 
 // [P47d] Те саме ядро на float-буфері, без перетворення й насичення.
@@ -459,8 +485,42 @@ void eq::getAllDb(int8_t out[eq_cfg::kBandCount]) {
     g_radio.getAllDb(out);
 }
 
+#if EQ_DEBUG
+namespace {
+
+// [E1] Звіт про насичення радіо-EQ. Викликається з eq::setSampleRate() (задача плеєра, НЕ з хука): не частіше
+// за eq_cfg::kDebugReportMs; друкує лише якщо з попереднього звіту були насичені відліки. Максимум скидається
+// щоразу, тож peak стосується саме періоду звіту.
+void debugReportRadio() {
+    static uint32_t s_lastMs = 0;
+    static uint32_t s_lastClips = 0;
+    const uint32_t now = millis();
+    if (now - s_lastMs < eq_cfg::kDebugReportMs) {
+        return;
+    }
+    const uint32_t periodMs = now - s_lastMs;
+    s_lastMs = now;
+    const uint32_t clips = g_radio.clipCount();
+    const float peak = g_radio.debugTakePeak();
+    const uint32_t delta = clips - s_lastClips;
+    s_lastClips = clips;
+    if (delta == 0) {
+        return;
+    }
+    const float peakDb = (peak > 0.0f) ? 20.0f * log10f(peak / 2147483648.0f) : -200.0f;
+    Serial.printf("[EQ] radio sat: +%lu samples in %lu ms (total %lu), peak before saturation %+.1f dBFS\n",
+                  static_cast<unsigned long>(delta), static_cast<unsigned long>(periodMs),
+                  static_cast<unsigned long>(clips), static_cast<double>(peakDb));
+}
+
+}  // namespace
+#endif
+
 void eq::setSampleRate(uint32_t hz) {
     g_radio.setSampleRate(hz);
+#if EQ_DEBUG
+    debugReportRadio();
+#endif
 }
 
 uint32_t eq::sampleRate() {
@@ -469,4 +529,13 @@ uint32_t eq::sampleRate() {
 
 void eq::process(int32_t* buf, int32_t frames) {
     g_radio.process(buf, frames);
+}
+
+// [E1] Лічильник насичень радіо-EQ (ДО output_trim): див. eq.h.
+uint32_t eq::clipCount() {
+    return g_radio.clipCount();
+}
+
+void eq::resetClipCount() {
+    g_radio.resetClipCount();
 }

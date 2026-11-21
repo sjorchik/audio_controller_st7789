@@ -81,6 +81,11 @@ public:
     // не насичує й сюди не рахує.
     uint32_t clipCount() const;
     void resetClipCount();
+#if EQ_DEBUG
+    // [E1] Найбільший модуль відліку на виході каскаду ПЕРЕД насиченням (шкала int32, 2^31 = 0 дБFS) з
+    // попереднього виклику; скидає максимум. Лише process(); processFloat() не міряє. Будь-яка задача.
+    float debugTakePeak();
+#endif
 
     // --- ЛИШЕ задача-власник потоку ---
     void reset();                                 // обнулити стан фільтрів (після enable / відновлення)
@@ -103,6 +108,9 @@ private:
     std::atomic<uint32_t> rate_;           // поточна fs (читається без мʼютекса для швидкого шляху)
     std::atomic<bool>     bypass_;
     std::atomic<uint32_t> clips_;
+#if EQ_DEBUG
+    std::atomic<float>    dbgPeak_;        // [E1] макс. |відлік| ПЕРЕД насиченням з останнього debugTakePeak() (шкала int32)
+#endif
 
     // Під мʼютексом сеттерів:
     int8_t   gains_[eq_cfg::kBandCount];
@@ -142,6 +150,7 @@ void setAllDb(const int8_t gains[eq_cfg::kBandCount]);
 void getAllDb(int8_t out[eq_cfg::kBandCount]);
 
 // Частота дискретизації потоку, Гц (з задачі плеєра). Значення поза межами ігноруються.
+// [E1] При EQ_DEBUG = 1 цей виклик (він іде після кожного Audio::loop()) заодно друкує звіт про насичення радіо.
 void setSampleRate(uint32_t hz);
 
 // Остання прийнята частота дискретизації, Гц.
@@ -149,5 +158,10 @@ uint32_t sampleRate();
 
 // Хук радіо: обробляє інтерліврований стерео-блок int32 НА МІСЦІ (задача плеєра).
 void process(int32_t* buf, int32_t frames);
+
+// [E1] Насичені відліки (L і R окремо) на виході EQ радіо з останнього resetClipCount(). Це насичення
+// відбувається ДО output_trim (рівня станції) і гучності, тож вони його не послаблюють. Будь-яка задача.
+uint32_t clipCount();
+void resetClipCount();
 
 }  // namespace eq

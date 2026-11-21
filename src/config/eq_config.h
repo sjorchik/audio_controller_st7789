@@ -13,8 +13,11 @@
 // ---------------------------------------------------------------------------
 
 // Serial-лог еквалайзера ("[EQ] ..."): зміни смуг, пресету, частоти дискретизації.
-// У гарячому шляху (process) логів немає.
-#define EQ_DEBUG 1
+// [E1] Те саме для вимірювання насичення в хуку радіо: process() додатково запамʼятовує найбільший
+// модуль відліку ПЕРЕД насиченням, а звіт "[EQ] radio sat: ..." друкується не з хука, а з
+// eq::setSampleRate() (задача плеєра), не частіше за eq_cfg::kDebugReportMs і лише коли були насичення.
+// У гарячому шляху (process) логів немає. У релізі 0 (прибирає й додаткові обчислення в process()).
+#define EQ_DEBUG 0
 
 // 1 = задача плеєра після кожного Audio::loop() читає Audio::getSampleRate() і передає її в
 // eq::setSampleRate() (частота потоку змінна: 44.1 / 48 / 32 кГц ...).
@@ -32,8 +35,13 @@ constexpr uint8_t kBandCount = 5;
 constexpr uint16_t kBandFreqHz[kBandCount] = {60, 250, 1000, 4000, 12000};
 
 // Підсилення смуги, дБ (цілі кроки). 0 дБ = смуга прозора (identity-біквад).
-constexpr int kGainMinDb  = -12;
-constexpr int kGainMaxDb  = 12;
+// [E1] ЄДИНИЙ параметр діапазону — kGainRangeDb (симетричний, ± дБ). Від нього залежать: clamp у сеттерах
+// eq::Processor, sanitize() профілів у NVS, перевірки /api/eq (поля minDb / maxDb / min / max у відповідях),
+// LinePath (lp.eq*), AppController (екран EQ, IR, енкодер), масштаб стовпчика екрана «EQ + Balance».
+// Було ±12; ±18 обрано за аудитом насичення (див. звіт E1). Формат NVS (int8_t) не міняється.
+constexpr int kGainRangeDb = 18;
+constexpr int kGainMinDb  = -kGainRangeDb;
+constexpr int kGainMaxDb  = kGainRangeDb;
 constexpr int kGainStepDb = 1;
 
 // Добротність peaking-фільтра.
@@ -43,6 +51,9 @@ constexpr double kQ = 1.0;
 // Коефіцієнти інтерполюються лінійно (на кожен блок); стан фільтрів не скидається.
 // Значення 20 мс — компроміс між зникненням клацань і помітною затримкою зміни смуги.
 constexpr uint32_t kCoefRampMs = 20;
+
+// [E1] Період звіту про насичення радіо-EQ (лише EQ_DEBUG = 1), мс.
+constexpr uint32_t kDebugReportMs = 1000;
 
 // ---------------------------------------------------------------------------
 // Частота дискретизації потоку
@@ -60,6 +71,7 @@ constexpr double kMaxFreqRatio = 0.45;
 
 static_assert(kBandCount >= 1, "need at least one band");
 static_assert(kGainMinDb < 0 && kGainMaxDb > 0, "range must contain 0 dB");
+static_assert(kGainMinDb == -kGainMaxDb, "range must be symmetric (EQ screen scale and web sliders assume it)");
 static_assert(kGainMinDb >= -127 && kGainMaxDb <= 127, "gain must fit int8_t");
 static_assert(kGainStepDb >= 1, "step must be positive");
 static_assert((kGainMaxDb - kGainMinDb) % kGainStepDb == 0, "range must be a multiple of step");
@@ -67,6 +79,7 @@ static_assert(kBandFreqHz[0] > 0 && kBandFreqHz[0] < kBandFreqHz[1] &&
                   kBandFreqHz[1] < kBandFreqHz[2] && kBandFreqHz[2] < kBandFreqHz[3] &&
                   kBandFreqHz[3] < kBandFreqHz[4],
               "band frequencies must be strictly ascending");
+static_assert(kDebugReportMs >= 100, "debug report period too short");
 static_assert(kQ > 0.1 && kQ < 10.0, "Q out of sane range");
 static_assert(kCoefRampMs >= 1 && kCoefRampMs <= 500, "coefficient ramp out of range");
 static_assert(kMinSampleRateHz > 0 && kMinSampleRateHz < kMaxSampleRateHz, "sample rate range");

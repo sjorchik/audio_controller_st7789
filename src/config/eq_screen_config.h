@@ -68,7 +68,7 @@ constexpr int16_t kAreaBottom = 150;                             // низ об�
 constexpr int16_t kZeroY      = (kAreaTop + kAreaBottom) / 2;    // нульова лінія (y=89)
 // Піввисота області: повна шкала (±kEqFullDb для EQ, ±kBalFullDb для балансу — однакова висота).
 constexpr int16_t kHalfH      = 40;
-constexpr int     kEqFullDb   = eq_cfg::kGainMaxDb;    // 12
+constexpr int     kEqFullDb   = eq_cfg::kGainMaxDb;    // [E1] межа з eq_cfg (симетричний діапазон); висота бару = |дБ| / kEqFullDb × kHalfH
 constexpr int     kBalFullDb  = balance_cfg::kMaxDb;   // 20
 
 // Значення над / під стовпчиком: відступ від кінця бару, px.
@@ -116,5 +116,6 @@ static_assert(kZeroY + kHalfH + kValueGap + kValueSmallPx <= kAreaBottom,
 static_assert(kAreaBottom + 2 <= kLabelY && kLabelY + display_cfg::kFontTinyPx <= display_cfg::kHeight,
               "frequency labels leave the screen");
 static_assert(kEqFullDb > 0 && kBalFullDb > 0, "full scale must be positive");
+static_assert(kEqFullDb == -eq_cfg::kGainMinDb, "EQ column scale assumes a symmetric range (see eq_cfg::kGainRangeDb)");
 
 }  // namespace eq_screen_cfg
