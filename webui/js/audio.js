@@ -1,5 +1,5 @@
 'use strict';
-/* Сторінка «Аудіо» (P51b): еквалайзер (5 смуг) і баланс ДЛЯ КОЖНОГО з 3 входів.
+/* Сторінка «Аудіо» (P51b, E2b): еквалайзер (кількість смуг — з відповіді /api/eq) і баланс ДЛЯ КОЖНОГО з 3 входів.
    Залежить від common.js і nav.js. Контракт: web_api.md §11 (/api/eq), §13 (/api/balance), §1.3 (профілі входів).
    Вкладка вибирає лише профіль для редагування — вхід на пристрої НЕ перемикається.
    Для кожного входу створено власний набір повзунків (createSlider): відкладена відправка з повзунка
@@ -8,10 +8,9 @@
   const g = (id) => document.getElementById(id);
   const ui = {
     wifi: g('wifi'), grp: g('grp'), tabs: g('tabs'), scope: g('scope'), reset: g('btn-reset-input'),
-    eqPanels: g('eq-panels'), eqErr: g('eq-err'), balPanels: g('bal-panels'), balNote: g('bal-note'), balErr: g('bal-err'),
+    eqPanels: g('eq-panels'), eqCount: g('eq-count'), eqErr: g('eq-err'), balPanels: g('bal-panels'), balNote: g('bal-note'), balErr: g('bal-err'),
   };
   const INPUTS = CONFIG.inputCount;
-  const BANDS = CONFIG.eqBandFreqHz.length;     // кількість смуг (довжина gainsDb); частоти й межі — з відповіді
 
   let st = null;             // останній /api/status
   let selected = null;       // вхід, чий профіль редагується (НЕ обовʼязково активний на пристрої)
@@ -24,7 +23,13 @@
   const isNum = (n) => typeof n === 'number' && isFinite(n);
   const isConn = (e) => e instanceof ApiError && (e.code === 'network' || e.code === 'timeout');
   const fmtDb = (v) => fmtSigned(v) + ' дБ';
-  const fmtFreq = (f) => (f >= 1000 ? String(f / 1000).replace('.', ',') + ' кГц' : f + ' Гц');
+  // 50 → «50 Гц», 1000 → «1 кГц», 2800 → «2,8 кГц», 10000 → «10 кГц»: десяткова кома, без зайвих нулів
+  const fmtNum = (v) => String(parseFloat(v.toFixed(2))).replace('.', ',');
+  const fmtFreq = (f) => (f >= 1000 ? fmtNum(f / 1000) + ' кГц' : fmtNum(f) + ' Гц');
+  const bandsText = (n) => {                       // «8 смуг», «1 смуга», «3 смуги»
+    const m10 = n % 10, m100 = n % 100;
+    return n + ' ' + (m10 === 1 && m100 !== 11 ? 'смуга' : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? 'смуги' : 'смуг');
+  };
   const iconBtn = (name, label, fn) => {
     const b = el('button', { class: 'btn btn-icon', type: 'button', 'aria-label': label, onclick: fn });
     setIcon(b, name);
@@ -51,37 +56,45 @@
   }
 
   /* ---------- Побудова повзунків (по набору на кожен вхід) ---------- */
+  // Рядок однієї смуги EQ. Кількість рядків залежить від відповіді /api/eq (syncRows), а не від константи.
+  function buildRow(i, b) {
+    const input = el('input', { class: 'slider slider-c', type: 'range', min: CONFIG.eqMinDb, max: CONFIG.eqMaxDb,
+      step: CONFIG.eqStepDb, value: 0, 'aria-label': 'Смуга ' + (b + 1) });
+    const title = el('span', null, 'Смуга ' + (b + 1));
+    const val = el('output', { class: 'param-val num' }, fmtDb(0));
+    const r = { b, input, title, val };
+    r.ctl = createSlider(input, {
+      send: async (v) => { applyEq(i, await api.setEq({ band: b, gainDb: v }, i)); },
+      onInput: (v) => setText(val, fmtDb(v)),
+      onFail: () => renderPanel(i),
+    });
+    r.set = (v) => {
+      v = clamp(v, Number(input.min), Number(input.max));
+      input.value = v; setText(val, fmtDb(v));
+      r.ctl.send(v);
+    };
+    const step = () => Number(input.step) || 1;
+    r.row = el('div', { class: 'param' },
+      el('div', { class: 'param-head' }, title, val),
+      el('div', { class: 'param-row' },
+        iconBtn('minus', 'Менше', () => r.set(Number(input.value) - step())),
+        input,
+        iconBtn('plus', 'Більше', () => r.set(Number(input.value) + step())),
+        el('button', { class: 'btn btn-zero', type: 'button', 'aria-label': 'Скинути смугу', onclick: () => r.set(0) }, '0')));
+    return r;
+  }
+  // Приводить кількість рядків входу i до n (змінюється лише коли n інше; старі повзунки відпускаються).
+  function syncRows(i, n) {
+    const eq = panels[i].eq;
+    if (eq.rows.length === n) return;
+    eq.rows.forEach((r) => r.ctl.release());
+    eq.rows = Array.from({ length: n }, (_, b) => buildRow(i, b));
+    eq.set.replaceChildren(eq.legend, ...eq.rows.map((r) => r.row));
+  }
+
   function buildPanel(i) {
     const eqLegend = el('legend', { class: 'visually-hidden' });
     const eqSet = el('fieldset', { class: 'group', disabled: true }, eqLegend);
-    const rows = [];
-    for (let b = 0; b < BANDS; b++) {
-      const input = el('input', { class: 'slider slider-c', type: 'range', min: CONFIG.eqMinDb, max: CONFIG.eqMaxDb,
-        step: CONFIG.eqStepDb, value: 0, 'aria-label': 'Смуга ' + (b + 1) });
-      const title = el('span', null, 'Смуга ' + (b + 1));
-      const val = el('output', { class: 'param-val num' }, fmtDb(0));
-      const r = { b, input, title, val };
-      r.ctl = createSlider(input, {
-        send: async (v) => { applyEq(i, await api.setEq({ band: b, gainDb: v }, i)); },
-        onInput: (v) => setText(val, fmtDb(v)),
-        onFail: () => renderPanel(i),
-      });
-      r.set = (v) => {
-        v = clamp(v, Number(input.min), Number(input.max));
-        input.value = v; setText(val, fmtDb(v));
-        r.ctl.send(v);
-      };
-      const step = () => Number(input.step) || 1;
-      r.row = el('div', { class: 'param' },
-        el('div', { class: 'param-head' }, title, val),
-        el('div', { class: 'param-row' },
-          iconBtn('minus', 'Менше', () => r.set(Number(input.value) - step())),
-          input,
-          iconBtn('plus', 'Більше', () => r.set(Number(input.value) + step())),
-          el('button', { class: 'btn btn-zero', type: 'button', 'aria-label': 'Скинути смугу', onclick: () => r.set(0) }, '0')));
-      eqSet.append(r.row);
-      rows.push(r);
-    }
     const eqBox = el('div', { class: 'in-panel', hidden: true }, eqSet);
     ui.eqPanels.append(eqBox);
 
@@ -113,23 +126,42 @@
     const balBox = el('div', { class: 'in-panel', hidden: true }, balSet);
     ui.balPanels.append(balBox);
 
-    return { eq: { box: eqBox, fs: eqSet, legend: eqLegend, rows }, bal: Object.assign(bal, { box: balBox }) };
+    return { eq: { box: eqBox, fs: eqSet, set: eqSet, legend: eqLegend, rows: [] }, bal: Object.assign(bal, { box: balBox }) };
   }
   for (let i = 0; i < INPUTS; i++) panels.push(buildPanel(i));
 
   /* ---------- Прийом даних ---------- */
-  // Відповідь GET / POST /api/eq?input=i: значення, а також межі й частоти (контракт: брати з відповіді).
+  // Розбір відповіді GET / POST /api/eq?input=i: кількість смуг = довжина gainsDb, частоти й межі — з відповіді.
+  // Повертає {eq} або {error} (текст для сторінки).
+  function parseEq(d, old) {
+    if (!d || !Array.isArray(d.gainsDb)) return { error: 'Пристрій повернув неповні дані еквалайзера.' };
+    const n = d.gainsDb.length;
+    if (n === 0) return { error: 'Пристрій не повернув жодної смуги еквалайзера.' };
+    if (!d.gainsDb.every(isNum)) return { error: 'Пристрій повернув некоректні значення еквалайзера.' };
+    let freq = null;
+    if (Array.isArray(d.freqHz)) {
+      if (d.freqHz.length !== n) return { error: 'Дані еквалайзера не збігаються: значень ' + n + ', частот ' + d.freqHz.length + '.' };
+      if (!d.freqHz.every(isNum)) return { error: 'Пристрій повернув некоректні частоти еквалайзера.' };
+      freq = d.freqHz.slice();
+    } else if (old && old.freqHz && old.freqHz.length === n) {
+      freq = old.freqHz;
+    }
+    let minDb = isNum(d.minDb) ? d.minDb : old ? old.minDb : CONFIG.eqMinDb;
+    let maxDb = isNum(d.maxDb) ? d.maxDb : old ? old.maxDb : CONFIG.eqMaxDb;
+    if (!(minDb < maxDb)) { minDb = CONFIG.eqMinDb; maxDb = CONFIG.eqMaxDb; }
+    const stepDb = isNum(d.stepDb) && d.stepDb > 0 ? d.stepDb : old ? old.stepDb : CONFIG.eqStepDb;
+    return { eq: { gainsDb: d.gainsDb.slice(), freqHz: freq, minDb, maxDb, stepDb } };
+  }
   function applyEq(i, d) {
-    if (!d || !Array.isArray(d.gainsDb) || d.gainsDb.length !== BANDS || !d.gainsDb.every(isNum)) return;
-    if (isNum(d.input) && d.input !== i) return;
-    const old = prof[i].eq;
-    prof[i].eq = {
-      gainsDb: d.gainsDb.slice(),
-      freqHz: Array.isArray(d.freqHz) && d.freqHz.length === BANDS && d.freqHz.every(isNum) ? d.freqHz.slice() : (old && old.freqHz) || null,
-      minDb: isNum(d.minDb) ? d.minDb : old ? old.minDb : CONFIG.eqMinDb,
-      maxDb: isNum(d.maxDb) ? d.maxDb : old ? old.maxDb : CONFIG.eqMaxDb,
-      stepDb: isNum(d.stepDb) && d.stepDb > 0 ? d.stepDb : old ? old.stepDb : CONFIG.eqStepDb,
-    };
+    if (d && isNum(d.input) && d.input !== i) return;
+    const res = parseEq(d, prof[i].eq);
+    if (res.error) {
+      if (i === selected) setErr(ui.eqErr, res.error);
+      renderPanel(i);
+      return;
+    }
+    prof[i].eq = res.eq;
+    if (i === selected) setErr(ui.eqErr, null);
     renderPanel(i);
   }
   // Відповідь GET {input, balance} / POST {ok, input, balance}.
@@ -144,7 +176,10 @@
     let eqErr = null, balErr = null;
     try { applyEq(i, await api.getEq(i)); } catch (e) { if (isConn(e)) throw e; eqErr = errorText(e); }
     try { applyBal(i, await api.getBalance(i)); } catch (e) { if (isConn(e)) throw e; balErr = errorText(e); }
-    if (i === selected) { setErr(ui.eqErr, eqErr); setErr(ui.balErr, balErr); }
+    if (i === selected) {
+      if (eqErr) setErr(ui.eqErr, eqErr);       // успіх / некоректні дані вже виставив applyEq
+      setErr(ui.balErr, balErr);
+    }
   }
 
   /* ---------- Рендер ---------- */
@@ -156,11 +191,12 @@
 
     p.eq.fs.disabled = !c.eq;
     if (c.eq) {
+      syncRows(i, c.eq.gainsDb.length);
       p.eq.rows.forEach((r) => {
         setAttr(r.input, 'min', c.eq.minDb);            // min / max / step — ПЕРЕД value
         setAttr(r.input, 'max', c.eq.maxDb);
         setAttr(r.input, 'step', c.eq.stepDb);
-        const f = c.eq.freqHz ? c.eq.freqHz[r.b] : null;
+        const f = c.eq.freqHz ? c.eq.freqHz[r.b] : null;      // немає частот у відповіді — «Смуга N»
         const label = isNum(f) ? fmtFreq(f) : 'Смуга ' + (r.b + 1);
         setText(r.title, label);
         setAttr(r.input, 'aria-label', 'Еквалайзер ' + label);
@@ -230,6 +266,7 @@
     });
 
     const sel = selected, name = nameOf(sel);
+    setText(ui.eqCount, prof[sel].eq ? bandsText(prof[sel].eq.gainsDb.length) : '');
     setText(ui.scope, sel === st.input
       ? 'Зараз грає цей вхід: зміни чути одразу. Значення зберігаються в профілі входу «' + name + '».'
       : 'Редагується лише профіль входу «' + name + '»: звук не зміниться, доки ви не перемкнетесь на цей вхід. Зараз грає «' + nameOf(st.input) + '».');
@@ -264,11 +301,13 @@
     const ok = await confirmDialog('Скинути еквалайзер (усі смуги 0 дБ) і баланс (0) входу «' + nameOf(i) +
       '»? Гучність і інші входи не зміняться.', { okText: 'Скинути', danger: true });
     if (!ok) return;
+    const n = prof[i].eq ? prof[i].eq.gainsDb.length : 0;     // кількість смуг — з даних
+    if (!n) return;
     resetBusy = true; render();
     panels[i].eq.rows.forEach((r) => r.ctl.release());
     panels[i].bal.ctl.release();
     const fails = [];
-    try { applyEq(i, await api.setEq({ gainsDb: new Array(BANDS).fill(0) }, i)); } catch (e) { fails.push('еквалайзер — ' + errorText(e)); }
+    try { applyEq(i, await api.setEq({ gainsDb: new Array(n).fill(0) }, i)); } catch (e) { fails.push('еквалайзер — ' + errorText(e)); }
     try { applyBal(i, await api.setBalance(CONFIG.balanceNeutralDb, i)); } catch (e) { fails.push('баланс — ' + errorText(e)); }
     if (fails.length) toast('Не все скинуто: ' + fails.join(' '), 'error');
     else toast('Вхід «' + nameOf(i) + '»: еквалайзер і баланс скинуто.', 'ok');
