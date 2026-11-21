@@ -2,11 +2,14 @@
 
 // Константи екрана «EQ + Balance» (режим редагування еквалайзера й балансу АКТИВНОГО входу).
 // [Prompt 49a] Створено: таймаут, крок, початковий вибір, тимчасова текстова розкладка.
-// [Prompt 49b] Тимчасова розкладка прибрана; додано справжню розкладку шести вертикальних стовпчиків
-// (5 смуг EQ + баланс). Логіка (AppController) читає лише kTimeoutMs / kStepDb / kDefaultSelected —
+// [Prompt 49b] Тимчасова розкладка прибрана; додано справжню розкладку вертикальних стовпчиків
+// (смуги EQ + баланс). Логіка (AppController) читає лише kTimeoutMs / kStepDb / kDefaultSelected —
 // їх значення НЕ змінено.
+// [E2a] Смуг EQ стало 8 (eq_cfg::kBandCount): колонок 9 (8 смуг + баланс). Розкладку розраховано ФОРМУЛОЮ від
+// ширини екрана й кількості колонок (kColW, kLeft, colX): зміна eq_cfg::kBandCount перебудовує екран сама.
+// Це мінімально-робочий вигляд; шліфування — окремий крок.
 // Усі числа екрана тут; screens.cpp не містить «магічних» координат.
-// Розкладка (320×170):
+// Розкладка (320×170; [E2a] ширина колонки ≈ 33 px, підписи й значення — Tiny / Small):
 //   y 0..23   шапка: назва «EQ + Balance» (Small) зліва, назва входу справа; лінія при kHeaderLineY
 //   y 28..150 область стовпчиків (kAreaTop..kAreaBottom), нульова лінія при kZeroY
 //   y 154..167 підписи частот і «Bal» (Tiny, kLabelY)
@@ -38,15 +41,18 @@ constexpr int16_t kHeaderNameGap  = 12;    // мінімальний промі�
 constexpr uint16_t kColorHeaderName = display_cfg::kColorYellow;   // назва входу — акцент (що саме редагується)
 
 // ---------------------------------------------------------------------------
-// Колонки (6 = 5 смуг EQ + баланс)
+// Колонки (kBandCount смуг EQ + баланс = kBandCount + 1)
 // ---------------------------------------------------------------------------
 constexpr uint8_t kColumnCount = eq_cfg::kBandCount + 1;
 constexpr uint8_t kBalanceColumn = eq_cfg::kBandCount;
 
-constexpr int16_t kColW     = 38;   // ширина комірки стовпчика (разом з полем навколо бару)
-constexpr int16_t kBarW     = 22;   // ширина самого стовпчика
-constexpr int16_t kGapEq    = 12;   // проміжок між смугами EQ
-constexpr int16_t kGapBal   = 24;   // проміжок перед балансом (з розділювальною лінією посередині)
+constexpr int16_t kSideMargin = 4;    // [E2a] мінімальне поле зліва / справа від колонок
+constexpr int16_t kGapEq    = 0;      // проміжок між смугами EQ (комірки впритул; бари розділяє поле навколо бару)
+constexpr int16_t kGapBal   = 12;     // проміжок перед балансом (з розділювальною лінією посередині)
+// [E2a] Ширина комірки — з ширини екрана: (320 - 2·4 - 12 - 0) / 9 = 33 px при 8 смугах + баланс.
+constexpr int16_t kColW     = static_cast<int16_t>((display_cfg::kWidth - 2 * kSideMargin - kGapBal -
+                                                    (eq_cfg::kBandCount - 1) * kGapEq) / kColumnCount);
+constexpr int16_t kBarW     = 20;     // ширина самого стовпчика (між барами лишається ≈ 13 px)
 constexpr int16_t kTotalW   = kColumnCount * kColW + (eq_cfg::kBandCount - 1) * kGapEq + kGapBal;
 constexpr int16_t kLeft     = (display_cfg::kWidth - kTotalW) / 2;   // центрування по горизонталі
 
@@ -106,6 +112,8 @@ static_assert(kHeaderLineY > kHeaderTitleY + display_cfg::kFontSmallPx, "header 
 static_assert(kAreaTop > kHeaderLineY, "columns area starts above the header line");
 static_assert(kLeft >= 4 && kLeft + kTotalW <= display_cfg::kWidth - 4, "columns do not fit the screen width");
 static_assert(kBarW >= 2 && kBarW < kColW, "bar must be narrower than its column");
+static_assert(kColW >= 24, "column is too narrow for the frequency labels / values (check eq_cfg::kBandCount)");
+static_assert(kGapBal >= 2, "gap before the balance column must fit the divider");
 static_assert(kDividerX > colX(eq_cfg::kBandCount - 1) + kColW && kDividerX < colX(kBalanceColumn),
               "divider must sit inside the gap before the balance column");
 static_assert(kHalfH > 0, "half height must be positive");

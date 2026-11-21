@@ -52,7 +52,7 @@
 // [Prompt 49a] ТИМЧАСОВИЙ текстовий екран «EQ + Баланс» (Mode::Menu + MenuContext::EqBalance): заголовок, шість
 // рядків (5 смуг EQ за kBandFreqHz і «Bal») зі значенням «%+d», маркер ">" і підсвітка вибраного. Лише для
 // перевірки логіки P49a; справжні вертикальні стовпчики малює P49b. Читає лише AppState (eqSelected, eqGainsDb, balanceDb).
-// [Prompt 49b] Екран «EQ + Balance» — 6 вертикальних стовпчиків (5 смуг EQ + баланс), розкладка в
+// [Prompt 49b] Екран «EQ + Balance» — вертикальні стовпчики (смуги EQ + баланс), розкладка в
 // config/eq_screen_config.h; читає лише AppState (eqSelected, eqGainsDb, balanceDb, inputName).
 // [Prompt 17] ВИНЯТОК З ІЗОЛЯЦІЇ: рівні VU беруться напряму з VuSourceDecodedPcm::read() (з
 // частотою кадру), МИНАЮЧИ AppState; AppStateData.vuLeft/vuRight не використовуються.
@@ -521,8 +521,8 @@ void drawStationList(const AppStateData& s) {
     }
 }
 
-// [Prompt 49b] Екран «EQ + Balance»: шапка (назва екрана й назва активного входу), шість вертикальних
-// стовпчиків (5 смуг EQ і баланс) від спільної нульової лінії. Значення зі знаком над кінцем додатного
+// [Prompt 49b] Екран «EQ + Balance»: шапка (назва екрана й назва активного входу), вертикальні
+// стовпчиків (смуги EQ і баланс) від спільної нульової лінії. Значення зі знаком над кінцем додатного
 // стовпчика або під кінцем від'ємного; 0 — лише лінія, значення «0» над нею. Вибраний стовпчик — підсвітка
 // колонки, яскравіша заливка й більше значення. Усі координати — у config/eq_screen_config.h (eqc::).
 namespace eqc = eq_screen_cfg;
@@ -564,7 +564,7 @@ void drawEqBalance(const AppStateData& s) {
     D::fillRect(eqc::colX(sel), eqc::kAreaTop, eqc::kColW, static_cast<int16_t>(eqc::kAreaBottom - eqc::kAreaTop),
                 selIsBal ? eqc::kColorBalSel : eqc::kColorEqSel);
 
-    // --- Нульова лінія через усі шість колонок і розділювач EQ / Bal.
+    // --- Нульова лінія через усі колонки і розділювач EQ / Bal.
     D::drawLine(eqc::kLeft, eqc::kZeroY, static_cast<int16_t>(eqc::kLeft + eqc::kTotalW - 1), eqc::kZeroY,
                 eqc::kColorZero);
     D::drawLine(eqc::kDividerX, eqc::kAreaTop, eqc::kDividerX, eqc::kAreaBottom, eqc::kColorDivider);

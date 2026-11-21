@@ -1,7 +1,10 @@
 // Реалізація SettingsStore: один blob у NVS з версією формату, кеш у RAM,
 // відкладений запис з дебаунсом у власній легкій задачі.
-// [V1] Формат v8: профіль входу = {volume, eqGainsDb[5], balanceDb, vuSensDb} = 8 Б; Settings 128 Б, blob 132 Б.
-// БЕЗ МІГРАЦІЇ з v7 (прошивка на СТЕРТИЙ flash): blob v7 (130 Б) відхиляється з логом, діють дефолти.
+// [E2a] Формат v9: профіль входу = {volume, eqGainsDb[eq_cfg::kBandCount = 8], balanceDb, vuSensDb} = 11 Б;
+// Settings 138 Б, blob 142 Б. БЕЗ МІГРАЦІЇ з v8 (прошивка на СТЕРТИЙ flash: `pio run -t erase`): blob v8 (132 Б)
+// відхиляється з логом, діють дефолти (усі смуги EQ = 0 дБ).
+// [V1] (v8) профіль входу = {volume, eqGainsDb[5], balanceDb, vuSensDb} = 8 Б; Settings 128 Б, blob 132 Б.
+// БЕЗ МІГРАЦІЇ з v7: blob v7 (130 Б) відхилявся з логом, діяли дефолти.
 // [Prompt 48a] (v7) Формат v7: 3 логічні входи (0 = радіо, 1 = TV Box, 2 = Computer), профіль = {volume,
 // eqGainsDb[5], balanceDb}, без типу аудіопроцесора (чипи вирізано).
 // [Prompt 46b] (v6: 5 логічних входів.)
@@ -43,13 +46,19 @@ static_assert(sizeof(Settings::inputNames) / sizeof(Settings::inputNames[0]) ==
 static_assert(sizeof(StoredBlob) <= 1024, "keep the blob small");
 
 // ---------------------------------------------------------------------------
-// Перевірки розкладки (формат v8)
+// Перевірки розкладки (формат v9)
 // ---------------------------------------------------------------------------
-static_assert(defaults::kInputCount == 3, "format v8 is laid out for 3 logical inputs (radio + TV Box + Computer)");
+// [E2a] Розмір профілю залежить від eq_cfg::kBandCount (8 смуг): InputProfile 11 Б, Settings 138 Б, blob 142 Б.
+// Числа Settings / blob — вручну (як і раніше): зміна kBandCount ЗРУШИТЬ їх і зупинить збірку (разом із
+// settings_cfg::kFormatVersion, який тоді теж треба піднімати).
+static_assert(settings_cfg::kFormatVersion == 9,
+              "format v9 (8 EQ bands): bump settings_cfg::kFormatVersion to 9 in config/settings_config.h");
+static_assert(eq_cfg::kBandCount == 8, "format v9 is laid out for 8 EQ bands (change the sizes below and kFormatVersion together)");
+static_assert(defaults::kInputCount == 3, "format v9 is laid out for 3 logical inputs (radio + TV Box + Computer)");
 static_assert(sizeof(InputProfile) == 1 + eq_cfg::kBandCount + 1 + 1,
               "InputProfile = volume + EQ bands + balanceDb + vuSensDb, no padding");
-static_assert(sizeof(Settings) == 128, "Settings v8 is 128 bytes (v7 was 126)");
-static_assert(sizeof(StoredBlob) == 132, "v8 blob is 132 bytes (differs from every earlier format: 130/144/164/168/170/202)");
+static_assert(sizeof(Settings) == 138, "Settings v9 is 138 bytes (v8 was 128)");
+static_assert(sizeof(StoredBlob) == 142, "v9 blob is 142 bytes (differs from every earlier format: 130/132/144/164/168/170/202)");
 static_assert(defaults::kInputCount >= 1, "profiles[0] (radio) must exist");
 
 
@@ -105,7 +114,8 @@ void fillDefaults(Settings& s) {
     s.lastInput = defaults::kDefaultInput;
     s.lastStation = 0;
     s.lastMute = defaults::kDefaultMute;
-    // [Prompt 46a] Профіль кожного входу: типова гучність, еквалайзер плоский (0 дБ), [P48a] баланс 0 дБ.
+    // [Prompt 46a] Профіль кожного входу: типова гучність, еквалайзер плоский (усі eq_cfg::kBandCount смуг = 0 дБ),
+    // [P48a] баланс 0 дБ.
     for (uint8_t i = 0; i < defaults::kInputCount; ++i) {
         InputProfile& p = s.profiles[i];
         p.volume = defaults::kDefaultVolume;
@@ -283,8 +293,8 @@ bool SettingsStore::load() {
             Serial.printf("[SET] stored size %u unsupported, using defaults\n",
                           static_cast<unsigned>(len));
         } else {
-            // [Prompt 48a / V1] Приймаємо ЛИШЕ поточний формат v8 (версія + довжина + payload). Будь-який інший
-            // blob (старі версії v1..v7, чужа довжина) не мігрується: значення за замовчуванням.
+            // [Prompt 48a / V1 / E2a] Приймаємо ЛИШЕ поточний формат v9 (версія + довжина + payload). Будь-який
+            // інший blob (старі версії v1..v8, чужа довжина) не мігрується: значення за замовчуванням.
             alignas(4) uint8_t raw[sizeof(StoredBlob)];
             memset(raw, 0, sizeof(raw));
             const size_t got = prefs.getBytes(settings_cfg::kNvsBlobKey, raw, len);

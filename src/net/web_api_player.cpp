@@ -1,7 +1,7 @@
 // net/web_api_player.cpp (Prompt 18): POST /api/power, /api/mute, /api/volume,
 // /api/input, /api/player/*, /api/player/station.
 // [P50a] /api/gain ВИДАЛЕНО (маршрут не реєструється -> 404); додано GET /api/balance[?input=N].
-// [Prompt 30] + GET/POST /api/eq (5-смуговий еквалайзер радіо). На відміну від решти, /api/eq НЕ
+// [Prompt 30] + GET/POST /api/eq (багатосмуговий еквалайзер; смуг — eq_cfg::kBandCount). На відміну від решти, /api/eq НЕ
 // йде через AppController::runWebCommand(): це чисто програмний фільтр у хуку PCM (audio/eq.*),
 // без заліза й без стану контролера; обробник кладе значення в eq::* і в Settings (NVS, дебаунс).
 // [Prompt 48a] Аудіочіпи вирізано: 3 логічні входи (0 радіо, 1 TV Box, 2 Computer), `requireProc()` і
@@ -298,10 +298,10 @@ void handlePlayerStation(AsyncWebServerRequest* req) {
 }
 
 // ---------------------------------------------------------------------------
-// [Prompt 30] GET /api/eq, POST /api/eq — 5-смуговий еквалайзер
-//   GET : {"gainsDb":[0,0,0,0,0],"freqHz":[60,250,1000,4000,12000],"minDb":-12,"maxDb":12,"stepDb":1}
-//   POST: {"gainsDb":[a,b,c,d,e]}  (рівно 5 елементів; null = смугу не чіпати)
-//         або {"band":N,"gainDb":X}  (одна смуга, N = 0..4)
+// [Prompt 30] GET /api/eq, POST /api/eq — багатосмуговий еквалайзер
+//   GET : {"gainsDb":[0 × kBandCount],"freqHz":[eq_cfg::kBandFreqHz],"minDb":-18,"maxDb":18,"stepDb":1}
+//   POST: {"gainsDb":[...]}  (рівно eq_cfg::kBandCount елементів; null = смугу не чіпати)
+//         або {"band":N,"gainDb":X}  (одна смуга, N = 0..kBandCount - 1)
 //         -> 200 {"ok":true, ...те саме, що GET}
 // [Prompt 46b] Необовʼязковий вхід: GET /api/eq?input=N, POST {"input":N,...}; N = 0..2 (P48a; профіль цього входу,
 // незалежно від апаратної доступності); без поля — ПОТОЧНИЙ вхід. Відповідь (GET і POST) містить "input".

@@ -32,7 +32,7 @@
 #include "config/vu_sens_config.h"  // [V1] діапазон чутливості VU
 
 // [Prompt 46a] Профіль одного логічного входу: гучність (шкала UI 0..100, діапазон обрізає
-// AppController за audio_cfg::kVolumeUiMin..kVolumeUiMax), пресет 5-смугового еквалайзера, дБ
+// AppController за audio_cfg::kVolumeUiMin..kVolumeUiMax), пресет еквалайзера (eq_cfg::kBandCount смуг), дБ
 // (eq_cfg::kGainMinDb..kGainMaxDb, 0 = плоска АЧХ; sanitize() у settings.cpp обрізає пошкоджені
 // значення) і [P48a] баланс balanceDb, дБ (balance_cfg::kMinDb..kMaxDb, 0 = обидва канали без змін;
 // додатне = вправо, лівий послаблюється; поза діапазоном при завантаженні -> 0). Мʼют сюди НЕ входить.
@@ -66,7 +66,7 @@ struct Settings {
     bool lastMute;
 
     // [Prompt 21b] Профілі по входах (індекс = логічний вхід 0..kInputCount-1).
-    // [Prompt 46a] Профіль = {volume, eqGainsDb[5]}; [P48a] + balanceDb. Гучність пише AppController
+    // [Prompt 46a] Профіль = {volume, eqGainsDb[eq_cfg::kBandCount]}; [P48a] + balanceDb. Гучність пише AppController
     // (разом з lastInput); пресет EQ входу пише веб-обробник /api/eq (SettingsStore::modify); balanceDb
     // у P48a не пише ніхто (P48b). На екземпляр радіо (eq::*) застосовується лише пресет входу 0
     // (profiles[0].eqGainsDb): load(), resetToDefaults(), /api/eq, повернення на вхід 0 (AppController).

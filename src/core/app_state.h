@@ -39,7 +39,7 @@
 // апаратну доступність входів (inputCount чипа) вона НЕ враховує. До першого publishState() у
 // AppController::begin() значення 0 (нульова ініціалізація) не має сенсу — не читати раніше.
 // [Prompt 49a] ДОДАНО: MenuContext::EqBalance (екран «EQ + баланс» = Mode::Menu + цей контекст, за зразком
-// StationList) та поля eqSelected, eqGainsDb[5] (лише в кінець структури). Публікує AppController, поки екран
+// StationList) та поля eqSelected, eqGainsDb[eq_cfg::kBandCount] (лише в кінець структури). Публікує AppController, поки екран
 // відкритий; поза ним нулі.
 // [Prompt 50b] ВИДАЛЕНО поля bass, treble, balance (legacy-нуль; баланс активного входу — balanceDb), gain, loudness;
 // AdjustTarget тепер {Volume, Balance}.

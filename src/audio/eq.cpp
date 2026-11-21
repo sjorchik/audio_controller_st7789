@@ -1,4 +1,5 @@
-// 5-смуговий еквалайзер (Prompt 30; P45 — екземпляри; P47d — processFloat). Опис і правила потоків — у eq.h.
+// Багатосмуговий еквалайзер (Prompt 30; P45 — екземпляри; P47d — processFloat; [E2a] 8 смуг: усе за eq_cfg::kBandCount).
+// Опис і правила потоків — у eq.h.
 //
 // ВАЖЛИВО: файл НЕ включає Audio.h (як і vu_pcm_hook.cpp / output_trim.cpp). Залежності: математика,
 // FreeRTOS-мʼютекс сеттерів і Serial-лог (лише при EQ_DEBUG).
@@ -15,6 +16,7 @@
 
 #if EQ_DEBUG
 #include <Arduino.h>
+#include <esp_timer.h>  // [E2a] esp_timer_get_time(): вимір вартості eq::process() у хуку радіо
 #define EQ_LOG(...) Serial.printf(__VA_ARGS__)
 #else
 #define EQ_LOG(...) \
@@ -38,6 +40,24 @@ int clampDb(int db) {
     if (db > eq_cfg::kGainMaxDb) db = eq_cfg::kGainMaxDb;
     return db;
 }
+
+#if EQ_DEBUG
+// [E2a] Пресет одним рядком "a b c ..." (kBandCount значень) для логів: без літералів за кількістю смуг.
+void formatGains(const int8_t* g, char* out, size_t cap) {
+    if (cap == 0) {
+        return;
+    }
+    out[0] = '\0';
+    size_t pos = 0;
+    for (uint8_t b = 0; b < kN; ++b) {
+        const int n = snprintf(out + pos, cap - pos, b == 0 ? "%d" : " %d", static_cast<int>(g[b]));
+        if (n < 0 || static_cast<size_t>(n) >= cap - pos) {
+            break;  // не влізло: рядок обрізано (лише лог)
+        }
+        pos += static_cast<size_t>(n);
+    }
+}
+#endif
 
 // Peaking EQ (RBJ Audio EQ Cookbook). Рахується ЛИШЕ в сеттерах (контекст викликача), у double.
 // У hot path (process) цієї функції немає.
@@ -230,9 +250,13 @@ void eq::Processor::setAllDb(const int8_t gains[eq_cfg::kBandCount]) {
     }
     if (changed) {
         publishLocked(false);
-        EQ_LOG("[EQ] %s preset %d %d %d %d %d dB\n", tag_, static_cast<int>(gains_[0]),
-               static_cast<int>(gains_[1]), static_cast<int>(gains_[2]), static_cast<int>(gains_[3]),
-               static_cast<int>(gains_[4]));
+#if EQ_DEBUG
+        {
+            char s[kN * 5 + 1];  // «-18 » = 4 символи на смугу + нуль-термінатор
+            formatGains(gains_, s, sizeof(s));
+            EQ_LOG("[EQ] %s preset %s dB\n", tag_, s);
+        }
+#endif
     }
     unlock();
 }
@@ -488,9 +512,19 @@ void eq::getAllDb(int8_t out[eq_cfg::kBandCount]) {
 #if EQ_DEBUG
 namespace {
 
+// [E2a] Вартість eq::process() у хуку радіо (мкс на виклик). Пише ЛИШЕ хук (задача бібліотеки, ядро 1),
+// звіт друкує задача плеєра (інша задача) — тому атомарні лічильники без мʼютекса; значення беруться exchange().
+// Зайві інструкції — лише при EQ_DEBUG = 1 (два esp_timer_get_time() навколо виклику ≈ 1 мкс); у релізі цього немає.
+std::atomic<uint32_t> g_procCalls{0};
+std::atomic<uint32_t> g_procFrames{0};
+std::atomic<uint32_t> g_procSumUs{0};
+std::atomic<uint32_t> g_procMaxUs{0};
+
 // [E1] Звіт про насичення радіо-EQ. Викликається з eq::setSampleRate() (задача плеєра, НЕ з хука): не частіше
 // за eq_cfg::kDebugReportMs; друкує лише якщо з попереднього звіту були насичені відліки. Максимум скидається
 // щоразу, тож peak стосується саме періоду звіту.
+// [E2a] Додатково — рядок "[EQ] radio proc: ..." (середній / максимальний час eq::process() за період і кількість
+// смуг із ненульовим підсиленням); друкується щоразу, коли за період були виклики хука.
 void debugReportRadio() {
     static uint32_t s_lastMs = 0;
     static uint32_t s_lastClips = 0;
@@ -500,6 +534,28 @@ void debugReportRadio() {
     }
     const uint32_t periodMs = now - s_lastMs;
     s_lastMs = now;
+
+    const uint32_t calls = g_procCalls.exchange(0, std::memory_order_relaxed);
+    const uint32_t frames = g_procFrames.exchange(0, std::memory_order_relaxed);
+    const uint32_t sumUs = g_procSumUs.exchange(0, std::memory_order_relaxed);
+    const uint32_t maxUs = g_procMaxUs.exchange(0, std::memory_order_relaxed);
+    if (calls != 0) {
+        int8_t g[kN];
+        g_radio.getAllDb(g);
+        unsigned nz = 0;
+        for (uint8_t b = 0; b < kN; ++b) {
+            if (g[b] != 0) {
+                ++nz;
+            }
+        }
+        Serial.printf("[EQ] radio proc: %lu calls in %lu ms, avg %lu us, max %lu us per call, avg %lu frames/call, "
+                      "%u of %u bands non-zero, fs %lu Hz\n",
+                      static_cast<unsigned long>(calls), static_cast<unsigned long>(periodMs),
+                      static_cast<unsigned long>(sumUs / calls), static_cast<unsigned long>(maxUs),
+                      static_cast<unsigned long>(frames / calls), nz, static_cast<unsigned>(kN),
+                      static_cast<unsigned long>(g_radio.sampleRate()));
+    }
+
     const uint32_t clips = g_radio.clipCount();
     const float peak = g_radio.debugTakePeak();
     const uint32_t delta = clips - s_lastClips;
@@ -528,7 +584,21 @@ uint32_t eq::sampleRate() {
 }
 
 void eq::process(int32_t* buf, int32_t frames) {
+#if EQ_DEBUG
+    // [E2a] Вимір вартості виклику (хук радіо). Без printf: лише накопичення; звіт — з eq::setSampleRate().
+    const int64_t t0 = esp_timer_get_time();
     g_radio.process(buf, frames);
+    const int64_t dt = esp_timer_get_time() - t0;
+    const uint32_t us = dt > 0 ? static_cast<uint32_t>(dt) : 0u;
+    g_procCalls.fetch_add(1, std::memory_order_relaxed);
+    g_procFrames.fetch_add(frames > 0 ? static_cast<uint32_t>(frames) : 0u, std::memory_order_relaxed);
+    g_procSumUs.fetch_add(us, std::memory_order_relaxed);
+    if (us > g_procMaxUs.load(std::memory_order_relaxed)) {
+        g_procMaxUs.store(us, std::memory_order_relaxed);  // єдиний писач — хук; звітувач лише скидає
+    }
+#else
+    g_radio.process(buf, frames);
+#endif
 }
 
 // [E1] Лічильник насичень радіо-EQ (ДО output_trim): див. eq.h.

@@ -1,6 +1,7 @@
 // Serial-тест Settings. Протокол — у settings_test.h.
 // [Prompt 21b] Поле vol змінює профіль входу Settings::lastInput; set.show друкує профілі всіх входів.
-// [Prompt 46a] Профіль = {volume, eqGainsDb[5]}: команди bass/treble/balance/loud/gain прибрано.
+// [Prompt 46a] Профіль = {volume, eqGainsDb[eq_cfg::kBandCount]}: команди bass/treble/balance/loud/gain прибрано.
+// [E2a] set.show друкує всі eq_cfg::kBandCount смуг профілю (було 5 фіксованих).
 // [Prompt 48a] Команду set.proc і поле processorType прибрано (аудіочіпи вирізано); show друкує balanceDb.
 
 #include "core/settings_test.h"
@@ -14,6 +15,7 @@
 #include <string.h>
 
 #include "config/defaults.h"
+#include "config/eq_config.h"  // [E2a] eq_cfg::kBandCount
 #include "core/settings.h"
 
 namespace {
@@ -89,11 +91,21 @@ void printShow() {
                   s.lastMute ? 1 : 0);
     for (uint8_t i = 0; i < defaults::kInputCount; ++i) {
         const InputProfile& p = s.profiles[i];
-        Serial.printf("[SET] profile[%u]%s vol=%d eq=[%d %d %d %d %d] bal=%d\n", static_cast<unsigned>(i),
-                      i == s.lastInput ? "*" : " ", static_cast<int>(p.volume),
-                      static_cast<int>(p.eqGainsDb[0]), static_cast<int>(p.eqGainsDb[1]),
-                      static_cast<int>(p.eqGainsDb[2]), static_cast<int>(p.eqGainsDb[3]),
-                      static_cast<int>(p.eqGainsDb[4]), static_cast<int>(p.balanceDb));
+        // [E2a] Усі смуги EQ профілю одним рядком (kBandCount значень, до 4 символів на смугу).
+        char eqText[eq_cfg::kBandCount * 4 + 1];
+        size_t pos = 0;
+        eqText[0] = '\0';
+        for (uint8_t b = 0; b < eq_cfg::kBandCount; ++b) {
+            const int n = snprintf(eqText + pos, sizeof(eqText) - pos, b == 0 ? "%d" : " %d",
+                                   static_cast<int>(p.eqGainsDb[b]));
+            if (n < 0 || static_cast<size_t>(n) >= sizeof(eqText) - pos) {
+                break;
+            }
+            pos += static_cast<size_t>(n);
+        }
+        Serial.printf("[SET] profile[%u]%s vol=%d eq=[%s] bal=%d\n", static_cast<unsigned>(i),
+                      i == s.lastInput ? "*" : " ", static_cast<int>(p.volume), eqText,
+                      static_cast<int>(p.balanceDb));
     }
     Serial.printf("[SET] dirty=%d nvsWrites=%u\n", SettingsStore::isDirty() ? 1 : 0,
                   static_cast<unsigned>(SettingsStore::writeCount()));

@@ -1394,6 +1394,24 @@ void printHeap() {
 
 #if LINE_PATH_ENABLE
 
+// [E2a] Підсилення смуг EQ одним рядком "a b c ..." (eq_cfg::kBandCount значень) для lp.stat / lp.eqall / lp.eqshow.
+// Буфер викликач робить розміром eq_cfg::kBandCount * kEqGainsCharsPerBand + 1.
+constexpr size_t kEqGainsCharsPerBand = 4;  // "-18 "
+void formatEqGains(const int8_t* g, char* out, size_t cap) {
+  if (cap == 0) {
+    return;
+  }
+  out[0] = '\0';
+  size_t pos = 0;
+  for (uint8_t b = 0; b < eq_cfg::kBandCount; ++b) {
+    const int n = snprintf(out + pos, cap - pos, b == 0 ? "%d" : " %d", static_cast<int>(g[b]));
+    if (n < 0 || static_cast<size_t>(n) >= cap - pos) {
+      break;  // не влізло: рядок обрізано (лише для виводу)
+    }
+    pos += static_cast<size_t>(n);
+  }
+}
+
 // lp.stat: кожен рядок — окремий lineOut (повний, з \n).
 void printStats() {
   const LinePathStats s = LinePath::stats();
@@ -1424,10 +1442,10 @@ void printStats() {
 #endif
           static_cast<double>(cfg::kVuOffsetDb), static_cast<double>(d.vuPeakLeftDbfs),
           static_cast<double>(d.vuPeakRightDbfs));
-  lineOut("[LINE] eq: clipCount=%lu (final saturation after volume) bypass=%d gains=%d %d %d %d %d dB\n",
-          LP_UL(s.clipCount),
-          s_eqLine.bypass() ? 1 : 0, static_cast<int>(g[0]), static_cast<int>(g[1]), static_cast<int>(g[2]),
-          static_cast<int>(g[3]), static_cast<int>(g[4]));
+  char gainsText[eq_cfg::kBandCount * kEqGainsCharsPerBand + 1];  // [E2a]
+  formatEqGains(g, gainsText, sizeof(gainsText));
+  lineOut("[LINE] eq: clipCount=%lu (final saturation after volume) bypass=%d gains=%s dB\n",
+          LP_UL(s.clipCount), s_eqLine.bypass() ? 1 : 0, gainsText);
   lineOut("[LINE] initMs=%lu lastStartMs=%lu stackFreeMin=%u B%s lastError=%s\n", LP_UL(s.initMs),
           LP_UL(s.lastStartMs), static_cast<unsigned>(d.stackFreeMin), d.alive ? "" : " (last run)",
           LinePath::errorName(s.lastError));
@@ -1653,10 +1671,13 @@ void cmdApi() {
   LinePath::setEqBandDb(2, 3);
   apiCheck("eq band set 3 dB", LinePath::getEqBandDb(2) == 3, fails);
   LinePath::setEqBandDb(2, 50);
-  apiCheck("eq band clamp +12", LinePath::getEqBandDb(2) == eq_cfg::kGainMaxDb, fails);
-  LinePath::setEqBandDb(9, 5);
-  apiCheck("eq bad band ignored", LinePath::getEqBandDb(9) == 0, fails);
-  const int8_t pat[eq_cfg::kBandCount] = {1, -2, 3, -4, 5};
+  apiCheck("eq band clamp max", LinePath::getEqBandDb(2) == eq_cfg::kGainMaxDb, fails);
+  LinePath::setEqBandDb(static_cast<uint8_t>(eq_cfg::kBandCount), 5);  // [E2a] перша неіснуюча смуга
+  apiCheck("eq bad band ignored", LinePath::getEqBandDb(static_cast<uint8_t>(eq_cfg::kBandCount)) == 0, fails);
+  int8_t pat[eq_cfg::kBandCount];  // [E2a] різні значення для всіх смуг: +1, -2, +3, -4, ...
+  for (uint8_t b = 0; b < eq_cfg::kBandCount; ++b) {
+    pat[b] = static_cast<int8_t>((b % 2 == 0) ? (b + 1) : -(b + 1));
+  }
   LinePath::setEqAllDb(pat);
   int8_t got[eq_cfg::kBandCount] = {};
   LinePath::getEqAllDb(got);
@@ -1918,22 +1939,37 @@ void handleLine(const char* line) {
       lineOut("[LINE] eq band %d = %d dB\n", band, db);
     }
   } else if (strncmp(c, "eqall ", 6) == 0) {
+    // [E2a] Розбір рівно eq_cfg::kBandCount цілих (зайві значення ігноруються, як і раніше з sscanf).
     int g[eq_cfg::kBandCount] = {};
-    const int cnt = sscanf(c + 6, "%d %d %d %d %d", &g[0], &g[1], &g[2], &g[3], &g[4]);
+    int cnt = 0;
+    {
+      const char* q = c + 6;
+      while (cnt < static_cast<int>(eq_cfg::kBandCount)) {
+        char*      end = nullptr;
+        const long x = strtol(q, &end, 10);
+        if (end == q) {
+          break;
+        }
+        g[cnt++] = static_cast<int>(x);
+        q = end;
+      }
+    }
     bool ok = (cnt == static_cast<int>(eq_cfg::kBandCount));
     for (uint8_t b = 0; ok && b < eq_cfg::kBandCount; ++b) {
       ok = (g[b] >= eq_cfg::kGainMinDb && g[b] <= eq_cfg::kGainMaxDb);
     }
     if (!ok) {
-      lineOut("[LINE] eqall: usage lp.eqall <5 values, %d..%d dB each>\n", eq_cfg::kGainMinDb,
-              eq_cfg::kGainMaxDb);
+      lineOut("[LINE] eqall: usage lp.eqall <%u values, %d..%d dB each>\n",
+              static_cast<unsigned>(eq_cfg::kBandCount), eq_cfg::kGainMinDb, eq_cfg::kGainMaxDb);
     } else {
       int8_t v[eq_cfg::kBandCount];
       for (uint8_t b = 0; b < eq_cfg::kBandCount; ++b) {
         v[b] = static_cast<int8_t>(g[b]);
       }
       LinePath::setEqAllDb(v);
-      lineOut("[LINE] eqall = %d %d %d %d %d dB\n", g[0], g[1], g[2], g[3], g[4]);
+      char text[eq_cfg::kBandCount * kEqGainsCharsPerBand + 1];
+      formatEqGains(v, text, sizeof(text));
+      lineOut("[LINE] eqall = %s dB\n", text);
     }
   } else if (strncmp(c, "eqbypass ", 9) == 0) {
     const int v = atoi(c + 9);
@@ -1942,9 +1978,10 @@ void handleLine(const char* line) {
   } else if (strcmp(c, "eqshow") == 0) {
     int8_t g[eq_cfg::kBandCount];
     LinePath::getEqAllDb(g);
-    lineOut("[LINE] eq gains %d %d %d %d %d dB, bypass=%d, clipCount=%lu\n", static_cast<int>(g[0]),
-            static_cast<int>(g[1]), static_cast<int>(g[2]), static_cast<int>(g[3]), static_cast<int>(g[4]),
-            LinePath::eqBypass() ? 1 : 0, static_cast<unsigned long>(LinePath::stats().clipCount));
+    char text[eq_cfg::kBandCount * kEqGainsCharsPerBand + 1];  // [E2a]
+    formatEqGains(g, text, sizeof(text));
+    lineOut("[LINE] eq gains %s dB, bypass=%d, clipCount=%lu\n", text, LinePath::eqBypass() ? 1 : 0,
+            static_cast<unsigned long>(LinePath::stats().clipCount));
   } else if (strcmp(c, "reset") == 0) {
     LinePath::resetStats();
     lineOut("[LINE] stats reset\n");
@@ -1961,7 +1998,8 @@ void handleLine(const char* line) {
     cmdVu();
   } else {
     lineOut("[LINE] commands: lp.start lp.rstart lp.stop lp.radio lp.stat lp.reset\n");
-    lineOut("[LINE] lp.att <dB> lp.vol <dB> lp.mute|lp.usermute 0|1 lp.eq <band> <dB> lp.eqall <5 values>\n");
+    lineOut("[LINE] lp.att <dB> lp.vol <dB> lp.mute|lp.usermute 0|1 lp.eq <band> <dB> lp.eqall <%u values>\n",
+            static_cast<unsigned>(eq_cfg::kBandCount));
 #if LINE_PATH_DIAG
     lineOut("[LINE] diag:   lp.cfg lp.raw [n] lp.spec [sec] lp.bypass <0|1> lp.tone <hz|off>\n");
 #endif

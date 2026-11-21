@@ -46,7 +46,7 @@ constexpr const char* kNvsBlobKey   = "settings";
 // [V1] 7 -> 8: профіль входу + int8_t vuSensDb (чутливість VU, дБ) = 8 Б; Settings 126 -> 128 Б, blob 130 -> 132 Б.
 // БЕЗ МІГРАЦІЇ з v7 (власник: «міграція не потрібна, контролер буде стиратися»): валідний лише blob версії 8 з
 // точним розміром; прошивка — на СТЕРТИЙ flash (`pio run -t erase`). Blob v7 (130 Б) буде відхилено з логом.
-constexpr uint8_t kFormatVersion = 8;
+constexpr uint8_t kFormatVersion = 9;
 
 // [Prompt 39] Маска дозволених логічних входів (Settings::inputEnabledMask): біт i = вхід i.
 // [Prompt 48a] 3 логічні входи (0 радіо, 1 TV Box, 2 Computer): маска = 3 біти, за замовчуванням усі

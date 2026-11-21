@@ -19,7 +19,7 @@
 //   POST /api/vu               (V2) {"value":N[,"input":M]} чутливість VU ±20 дБ активного (або вказаного) входу;
 //                              лише відображення VU, на звук не впливає
 //   GET  /api/eq               (P30) пресет еквалайзера радіо
-//   POST /api/eq               (P30) {"gainsDb":[a,b,c,d,e]} або {"band":N,"gainDb":X}
+//   POST /api/eq               (P30) {"gainsDb":[kBandCount значень]} або {"band":N,"gainDb":X}
 //   GET  /api/inputs           (P39) входи: назва, апаратна доступність, дозвіл (маска)
 //   POST /api/inputs           (P39) {"enabled":[b|null x3]} або {"index":N,"enabled":bool}; йде через
 //                              AppController::runWebCommand(InputsEnabledSet)

@@ -170,7 +170,7 @@
 // мʼютом проходу: мʼют -> kExtMuteSettleMs -> select() -> input_selector_cfg::kRelaySettleMs -> розмʼют.
 // Радіо реле НЕ чіпає. Чип-мʼют (setMute) прибрано: s_hwMute = «цифровий мʼют виставлено» (потрібен
 // піну підсилювача P23c). Тембр / gain / loudness видалено ([P50b] разом з WebCmdType::GainSet, WebCmdResult::Unsupported і
-// setTone()). Профіль входу = {volume, eqGainsDb[5], balanceDb}: контролер пише лише гучність;
+// setTone()). Профіль входу = {volume, eqGainsDb[eq_cfg::kBandCount], balanceDb}: контролер пише лише гучність;
 // balanceDb поки не чіпає (P48b). inputAvailable() = маска входів (+ офлайн: без радіо).
 // IR прямого вибору: INPUT_RADIO / INPUT_TV / INPUT_PC -> 0 / 1 / 2; INPUT_AUX — без дії.
 
@@ -180,7 +180,8 @@
 // автоповернення цілі (P31 / P48b) прибрано: s_target завжди Volume (поле лишено для AppState / ABI).
 // Екран = Mode::Menu + MenuContext::EqBalance (за зразком StationList: відтворення, вхід і мʼют не зупиняються,
 // режим лише перехоплює керування; новий Mode не вводився, щоб не чіпати web_api_common / web_server, які
-// перелічують Mode). Редагується пресет EQ і баланс АКТИВНОГО входу: 6 параметрів (0..4 смуги EQ, 5 баланс).
+// перелічують Mode). Редагується пресет EQ і баланс АКТИВНОГО входу: eq_cfg::kBandCount + 1 параметрів (0..kBandCount - 1 смуги EQ,
+// kBandCount баланс) [E2a: 8 смуг + баланс = 9].
 // LEFT / RIGHT — вибір (по колу), UP / DOWN / обертання — ±eq_screen_cfg::kStepDb дБ, клік енкодера — наступний
 // параметр по колу (P49c; раніше — скинути вибраний у 0), довге утримання енкодера / BACK / таймаут eq_screen_cfg::kTimeoutMs — вихід. Зміни живі й
 // зберігаються тими самими шляхами, що веб: EQ — Settings::profiles[s_input].eqGainsDb (SettingsStore::modify,
@@ -1233,7 +1234,7 @@ bool setVuSensTarget(int v) {
 }
 
 // --- [Prompt 49a] Екран «EQ + баланс» -------------------------------------------------------------------------
-// Параметри екрана: 0..eq_cfg::kBandCount - 1 = смуги EQ, kEqBalanceIdx = баланс (шостий).
+// Параметри екрана: 0..eq_cfg::kBandCount - 1 = смуги EQ, kEqBalanceIdx = баланс (останній, kBandCount-й).
 constexpr uint8_t kEqBalanceIdx = eq_cfg::kBandCount;
 constexpr uint8_t kEqParamCount = eq_cfg::kBandCount + 1;
 
