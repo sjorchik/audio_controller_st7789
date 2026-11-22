@@ -46,7 +46,10 @@ constexpr const char* kNvsBlobKey   = "settings";
 // [V1] 7 -> 8: профіль входу + int8_t vuSensDb (чутливість VU, дБ) = 8 Б; Settings 126 -> 128 Б, blob 130 -> 132 Б.
 // БЕЗ МІГРАЦІЇ з v7 (власник: «міграція не потрібна, контролер буде стиратися»): валідний лише blob версії 8 з
 // точним розміром; прошивка — на СТЕРТИЙ flash (`pio run -t erase`). Blob v7 (130 Б) буде відхилено з логом.
-constexpr uint8_t kFormatVersion = 9;
+// [E4] 9 -> 10: профіль входу з eq_cfg::kBandCount = 10 смугами (13 Б), у кінець Settings додано eqBandSet (id набору
+// частот EQ, uint8). Settings 138 -> 144 Б, blob 142 -> 148 Б. БЕЗ МІГРАЦІЇ (blob v9 / 142 Б відхиляється з логом, діють
+// дефолти; прошивка — на СТЕРТИЙ flash: `pio run -t erase`). Зміна EQ_BAND_SET формат НЕ змінює (розмір той самий).
+constexpr uint8_t kFormatVersion = 10;
 
 // [Prompt 39] Маска дозволених логічних входів (Settings::inputEnabledMask): біт i = вхід i.
 // [Prompt 48a] 3 логічні входи (0 радіо, 1 TV Box, 2 Computer): маска = 3 біти, за замовчуванням усі
@@ -102,3 +105,4 @@ constexpr uint16_t kTestRampSteps  = 100;
 constexpr uint32_t kTestRampStepMs = 20;
 
 }  // namespace settings_cfg
+

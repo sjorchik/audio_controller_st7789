@@ -1,5 +1,8 @@
 // Реалізація SettingsStore: один blob у NVS з версією формату, кеш у RAM,
 // відкладений запис з дебаунсом у власній легкій задачі.
+// [E4] Формат v10: профіль входу = {volume, eqGainsDb[eq_cfg::kBandCount = 10], balanceDb, vuSensDb} = 13 Б; у кінець Settings
+// додано eqBandSet (id набору частот EQ); Settings 144 Б, blob 148 Б. БЕЗ МІГРАЦІЇ з v9 (прошивка на СТЕРТИЙ flash).
+// При завантаженні id ≠ eq_cfg::kBandSetId -> усі пресети EQ = 0 дБ (settings_eq_set::reconcile), id оновлюється й зберігається.
 // [E2a] Формат v9: профіль входу = {volume, eqGainsDb[eq_cfg::kBandCount = 8], balanceDb, vuSensDb} = 11 Б;
 // Settings 138 Б, blob 142 Б. БЕЗ МІГРАЦІЇ з v8 (прошивка на СТЕРТИЙ flash: `pio run -t erase`): blob v8 (132 Б)
 // відхиляється з логом, діють дефолти (усі смуги EQ = 0 дБ).
@@ -25,6 +28,7 @@
 #include "config/eq_config.h"
 #include "config/settings_config.h"
 #include "config/vu_sens_config.h"  // [V1]
+#include "core/settings_eq_set.h"     // [E4] захист від незбігу набору частот EQ
 
 namespace {
 
@@ -46,19 +50,20 @@ static_assert(sizeof(Settings::inputNames) / sizeof(Settings::inputNames[0]) ==
 static_assert(sizeof(StoredBlob) <= 1024, "keep the blob small");
 
 // ---------------------------------------------------------------------------
-// Перевірки розкладки (формат v9)
+// Перевірки розкладки (формат v10)
 // ---------------------------------------------------------------------------
-// [E2a] Розмір профілю залежить від eq_cfg::kBandCount (8 смуг): InputProfile 11 Б, Settings 138 Б, blob 142 Б.
+// [E4] Розмір профілю залежить від eq_cfg::kBandCount (10 смуг): InputProfile 13 Б, Settings 144 Б, blob 148 Б.
+// (v9, 8 смуг: 11 / 138 / 142 Б.)
 // Числа Settings / blob — вручну (як і раніше): зміна kBandCount ЗРУШИТЬ їх і зупинить збірку (разом із
 // settings_cfg::kFormatVersion, який тоді теж треба піднімати).
-static_assert(settings_cfg::kFormatVersion == 9,
-              "format v9 (8 EQ bands): bump settings_cfg::kFormatVersion to 9 in config/settings_config.h");
-static_assert(eq_cfg::kBandCount == 8, "format v9 is laid out for 8 EQ bands (change the sizes below and kFormatVersion together)");
-static_assert(defaults::kInputCount == 3, "format v9 is laid out for 3 logical inputs (radio + TV Box + Computer)");
+static_assert(settings_cfg::kFormatVersion == 10,
+              "format v10 (10 EQ bands + eqBandSet): bump settings_cfg::kFormatVersion to 10 in config/settings_config.h");
+static_assert(eq_cfg::kBandCount == 10, "format v10 is laid out for 10 EQ bands (change the sizes below and kFormatVersion together)");
+static_assert(defaults::kInputCount == 3, "format v10 is laid out for 3 logical inputs (radio + TV Box + Computer)");
 static_assert(sizeof(InputProfile) == 1 + eq_cfg::kBandCount + 1 + 1,
               "InputProfile = volume + EQ bands + balanceDb + vuSensDb, no padding");
-static_assert(sizeof(Settings) == 138, "Settings v9 is 138 bytes (v8 was 128)");
-static_assert(sizeof(StoredBlob) == 142, "v9 blob is 142 bytes (differs from every earlier format: 130/132/144/164/168/170/202)");
+static_assert(sizeof(Settings) == 144, "Settings v10 is 144 bytes (v9 was 138)");
+static_assert(sizeof(StoredBlob) == 148, "v10 blob is 148 bytes (v9 was 142; differs from the earlier formats)");
 static_assert(defaults::kInputCount >= 1, "profiles[0] (radio) must exist");
 
 
@@ -127,6 +132,8 @@ void fillDefaults(Settings& s) {
     }
     // [Prompt 48a] Усі три входи дозволені (0x07).
     s.inputEnabledMask = settings_cfg::kInputMaskDefault;
+    // [E4] Пресети плоскі, тож вони «належать» поточному набору частот.
+    s.eqBandSet = eq_cfg::kBandSetId;
 }
 
 // bool з некоректним бітовим патерном — UB при читанні, тому читаємо як байт.
@@ -293,8 +300,8 @@ bool SettingsStore::load() {
             Serial.printf("[SET] stored size %u unsupported, using defaults\n",
                           static_cast<unsigned>(len));
         } else {
-            // [Prompt 48a / V1 / E2a] Приймаємо ЛИШЕ поточний формат v9 (версія + довжина + payload). Будь-який
-            // інший blob (старі версії v1..v8, чужа довжина) не мігрується: значення за замовчуванням.
+            // [Prompt 48a / V1 / E2a / E4] Приймаємо ЛИШЕ поточний формат v10 (версія + довжина + payload). Будь-який
+            // інший blob (старі версії v1..v9, чужа довжина) не мігрується: значення за замовчуванням.
             alignas(4) uint8_t raw[sizeof(StoredBlob)];
             memset(raw, 0, sizeof(raw));
             const size_t got = prefs.getBytes(settings_cfg::kNvsBlobKey, raw, len);
@@ -322,9 +329,22 @@ bool SettingsStore::load() {
 
     if (haveStored) {
         sanitize(loaded);
+        // [E4] Збережений id набору частот ≠ поточного EQ_BAND_SET: пресети всіх входів -> 0 дБ (інакше підсилення
+        // опинились би на інших частотах), id оновлюється; решта налаштувань лишається. Лише при завантаженні.
+        uint8_t oldSet = 0;
+        const bool setChanged = settings_eq_set::reconcile(loaded, eq_cfg::kBandSetId, &oldSet);
         s_settings = loaded;
         s_dirty = false;
         applyEqLocked();  // [Prompt 30/46a] пресет входу 0 -> екземпляр радіо
+        if (setChanged) {
+            Serial.printf("[SET] eq band set changed %u -> %u, EQ gains reset\n", static_cast<unsigned>(oldSet),
+                          static_cast<unsigned>(eq_cfg::kBandSetId));
+            if (!writeLocked()) {
+                markDirtyLocked();  // фонова задача спробує ще раз
+                Serial.println("[SET] loaded from NVS");
+                return false;
+            }
+        }
         Serial.println("[SET] loaded from NVS");
         return true;
     }
@@ -434,3 +454,4 @@ bool SettingsStore::eraseStored() {
 uint32_t SettingsStore::writeCount() {
     return s_writeCount;
 }
+

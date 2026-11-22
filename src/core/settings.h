@@ -20,6 +20,8 @@
 // [Prompt 48a] NVS blob v7 (БЕЗ міграції): ВИДАЛЕНО processorType (аудіочіпи TDA7318 / PT2313L вирізано);
 // 3 логічні входи (inputNames[3], profiles[3]: 0 радіо, 1 TV Box, 2 Computer); профіль входу +balanceDb
 // (баланс ±20 дБ, крок 1 дБ, діапазон — config/balance_config.h; у P48a лише зберігається, DSP — P48b).
+// [E4] NVS blob v10 (БЕЗ міграції): профіль входу з eq_cfg::kBandCount = 10 смугами; у КІНЕЦЬ Settings додано eqBandSet
+// (id набору частот EQ, eq_cfg::kBandSetId = EQ_BAND_SET). Settings 144 Б, blob 148 Б.
 // [Prompt 39] У КІНЕЦЬ структури додано inputEnabledMask (маска дозволених входів, відключення
 // входів 1..3 з вебу). Формат blob-а v4; blobs v3, v2 і v1 мігруються в load() (усі входи дозволені).
 
@@ -77,6 +79,11 @@ struct Settings {
     // нормалізується в load()/sanitize() і в AppController (settings_cfg::normalizeInputMask). Пише лише
     // AppController (команда вебу WebCmdType::InputsEnabledSet). Поле стоїть ПІСЛЯ profiles.
     uint8_t inputEnabledMask;
+
+    // [E4] Ідентифікатор набору частот EQ, з яким збережено profiles[i].eqGainsDb (eq_cfg::kBandSetId). Стоїть ПІСЛЯ
+    // inputEnabledMask (лише в кінець). Пише SettingsStore (fillDefaults / load); при завантаженні, якщо id ≠ поточного
+    // EQ_BAND_SET, усі пресети EQ скидаються в 0 дБ, а id оновлюється (core/settings_eq_set.h). Решта налаштувань лишається.
+    uint8_t eqBandSet;
 };
 
 // Потокобезпечність: усі методи беруть внутрішній мʼютекс, КРІМ get() —
@@ -139,3 +146,4 @@ public:
     // [Prompt 6] ДОДАНО: скільки разів реально писали в NVS з моменту старту.
     static uint32_t writeCount();
 };
+

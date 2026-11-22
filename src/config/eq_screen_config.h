@@ -8,8 +8,12 @@
 // [E2a] Смуг EQ стало 8 (eq_cfg::kBandCount): колонок 9 (8 смуг + баланс). Розкладку розраховано ФОРМУЛОЮ від
 // ширини екрана й кількості колонок (kColW, kLeft, colX): зміна eq_cfg::kBandCount перебудовує екран сама.
 // Це мінімально-робочий вигляд; шліфування — окремий крок.
+// [E4] Смуг EQ стало 10 (eq_cfg::kBandCount, три набори частот EQ_BAND_SET): колонок 11 (10 смуг + баланс), ширина
+// колонки kColW = (320 − 8 − 12) / 11 = 27 px. Розкладка й далі рахується формулою; підписи частот формуються в screens.cpp
+// з eq_cfg::kBandFreqHz (короткий текст: 31, 125, 1k, 2.8k, 10k, 16k). Значення («+18» / «-18») підбирають кегль і знак за
+// шириною колонки: kValueSidePadPx.
 // Усі числа екрана тут; screens.cpp не містить «магічних» координат.
-// Розкладка (320×170; [E2a] ширина колонки ≈ 33 px, підписи й значення — Tiny / Small):
+// Розкладка (320×170; [E2a] ширина колонки ≈ 33 px, [E4] ≈ 27 px; підписи й значення — Tiny / Small):
 //   y 0..23   шапка: назва «EQ + Balance» (Small) зліва, назва входу справа; лінія при kHeaderLineY
 //   y 28..150 область стовпчиків (kAreaTop..kAreaBottom), нульова лінія при kZeroY
 //   y 154..167 підписи частот і «Bal» (Tiny, kLabelY)
@@ -49,10 +53,11 @@ constexpr uint8_t kBalanceColumn = eq_cfg::kBandCount;
 constexpr int16_t kSideMargin = 4;    // [E2a] мінімальне поле зліва / справа від колонок
 constexpr int16_t kGapEq    = 0;      // проміжок між смугами EQ (комірки впритул; бари розділяє поле навколо бару)
 constexpr int16_t kGapBal   = 12;     // проміжок перед балансом (з розділювальною лінією посередині)
-// [E2a] Ширина комірки — з ширини екрана: (320 - 2·4 - 12 - 0) / 9 = 33 px при 8 смугах + баланс.
+// [E2a] Ширина комірки — з ширини екрана: (320 - 2·4 - 12 - 0) / 9 = 33 px при 8 смугах + баланс;
+// [E4] (320 - 8 - 12) / 11 = 27 px при 10 смугах + баланс (kTotalW = 309, kLeft = 5).
 constexpr int16_t kColW     = static_cast<int16_t>((display_cfg::kWidth - 2 * kSideMargin - kGapBal -
                                                     (eq_cfg::kBandCount - 1) * kGapEq) / kColumnCount);
-constexpr int16_t kBarW     = 20;     // ширина самого стовпчика (між барами лишається ≈ 13 px)
+constexpr int16_t kBarW     = 20;     // ширина самого стовпчика ([E4] при kColW = 27 між барами лишається 7 px)
 constexpr int16_t kTotalW   = kColumnCount * kColW + (eq_cfg::kBandCount - 1) * kGapEq + kGapBal;
 constexpr int16_t kLeft     = (display_cfg::kWidth - kTotalW) / 2;   // центрування по горизонталі
 
@@ -85,6 +90,11 @@ constexpr uint8_t kValueTinyPx  = display_cfg::kFontTinyPx;    // решта з�
 // Підписи частот / «Bal» під областю.
 constexpr int16_t kLabelY     = 154;
 
+// [E4] Бічний запас (px, з кожного боку) між текстом значення й краєм колонки. Значення малюється Small (вибране) або
+// Tiny (решта); якщо текст із запасом не влазить у kColW — кегль зменшується до Tiny, а якщо й так не влазить, додатне
+// значення друкується без «+» (від'ємне — завжди зі знаком «-»; шрифт не має U+2212, тож мінус ASCII).
+constexpr int16_t kValueSidePadPx = 1;
+
 // ---------------------------------------------------------------------------
 // Кольори
 // ---------------------------------------------------------------------------
@@ -113,6 +123,7 @@ static_assert(kAreaTop > kHeaderLineY, "columns area starts above the header lin
 static_assert(kLeft >= 4 && kLeft + kTotalW <= display_cfg::kWidth - 4, "columns do not fit the screen width");
 static_assert(kBarW >= 2 && kBarW < kColW, "bar must be narrower than its column");
 static_assert(kColW >= 24, "column is too narrow for the frequency labels / values (check eq_cfg::kBandCount)");
+static_assert(kValueSidePadPx >= 0 && 2 * kValueSidePadPx < kColW, "value side padding must leave room inside the column");
 static_assert(kGapBal >= 2, "gap before the balance column must fit the divider");
 static_assert(kDividerX > colX(eq_cfg::kBandCount - 1) + kColW && kDividerX < colX(kBalanceColumn),
               "divider must sit inside the gap before the balance column");
@@ -127,3 +138,4 @@ static_assert(kEqFullDb > 0 && kBalFullDb > 0, "full scale must be positive");
 static_assert(kEqFullDb == -eq_cfg::kGainMinDb, "EQ column scale assumes a symmetric range (see eq_cfg::kGainRangeDb)");
 
 }  // namespace eq_screen_cfg
+

@@ -54,6 +54,9 @@
 // перевірки логіки P49a; справжні вертикальні стовпчики малює P49b. Читає лише AppState (eqSelected, eqGainsDb, balanceDb).
 // [Prompt 49b] Екран «EQ + Balance» — вертикальні стовпчики (смуги EQ + баланс), розкладка в
 // config/eq_screen_config.h; читає лише AppState (eqSelected, eqGainsDb, balanceDb, inputName).
+// [E4] Екран «EQ + Balance»: 10 смуг (eq_cfg::kBandCount, набір частот EQ_BAND_SET) + баланс = 11 колонок по 27 px. Підписи
+// частот формуються з eq_cfg::kBandFreqHz (formatBandLabel); значення підбирають кегль і знак за шириною колонки
+// (fitBandValue). Читає лише AppState, як і раніше.
 // [Prompt 17] ВИНЯТОК З ІЗОЛЯЦІЇ: рівні VU беруться напряму з VuSourceDecodedPcm::read() (з
 // частотою кадру), МИНАЮЧИ AppState; AppStateData.vuLeft/vuRight не використовуються.
 
@@ -527,7 +530,8 @@ void drawStationList(const AppStateData& s) {
 // колонки, яскравіша заливка й більше значення. Усі координати — у config/eq_screen_config.h (eqc::).
 namespace eqc = eq_screen_cfg;
 
-// Підпис смуги: <1000 Гц — число, ≥1000 — з «k» (1k, 4k, 12k), нецілі тисячі — «1.5k».
+// Підпис смуги ([E4]: формується з eq_cfg::kBandFreqHz, ручного списку немає): <1000 Гц — число (31, 125), ≥1000 — з «k»
+// (1k, 10k, 16k), нецілі тисячі — з десятковою ТОЧКОЮ без зайвих нулів (2.8k, 5.6k, 1.5k).
 void formatBandLabel(uint16_t hz, char* out, size_t cap) {
     if (hz < 1000u)                 snprintf(out, cap, "%u", static_cast<unsigned>(hz));
     else if (hz % 1000u == 0u)      snprintf(out, cap, "%uk", static_cast<unsigned>(hz / 1000u));
@@ -539,6 +543,21 @@ void formatBandLabel(uint16_t hz, char* out, size_t cap) {
 void formatSignedDb(int v, char* out, size_t cap) {
     if (v == 0) snprintf(out, cap, "0");
     else        snprintf(out, cap, "%+d", v);
+}
+
+// [E4] Значення колонки (смуга EQ або баланс): кегль і знак підбираються за шириною колонки eqc::kColW (колонка 27 px).
+// Порядок: вибране — Small, решта — Tiny; якщо текст із запасом eqc::kValueSidePadPx не влазить — Tiny; якщо й так не влазить
+// — додатне без «+» (від'ємне лишається зі знаком «-»). Повертає кегль; out — готовий рядок.
+FontSize fitBandValue(int v, bool selected, char* out, size_t cap) {
+    formatSignedDb(v, out, cap);
+    const int32_t maxW = eqc::kColW - 2 * eqc::kValueSidePadPx;
+    if (selected && UiFonts::textWidth(out, FontSize::Small) <= maxW) {
+        return FontSize::Small;
+    }
+    if (v > 0 && UiFonts::textWidth(out, FontSize::Tiny) > maxW) {
+        snprintf(out, cap, "%d", v);   // «+18» не влазить у Tiny: без «+»
+    }
+    return FontSize::Tiny;
 }
 
 void drawEqBalance(const AppStateData& s) {
@@ -593,9 +612,8 @@ void drawEqBalance(const AppStateData& s) {
 
         // --- Значення: над кінцем додатного (і над нульовою лінією для 0), під кінцем від'ємного.
         char val[8];
-        formatSignedDb(value, val, sizeof(val));
-        const FontSize valFont = selected ? FontSize::Small : FontSize::Tiny;
-        const int16_t  valH    = selected ? eqc::kValueSmallPx : eqc::kValueTinyPx;
+        const FontSize valFont = fitBandValue(value, selected, val, sizeof(val));   // [E4] за шириною колонки
+        const int16_t  valH    = (valFont == FontSize::Small) ? eqc::kValueSmallPx : eqc::kValueTinyPx;
         const uint16_t valColor = isBal ? (selected ? eqc::kColorBalBar : eqc::kColorBalValue)
                                         : (selected ? eqc::kColorValueSel : eqc::kColorValueDim);
         const int32_t valW = UiFonts::textWidth(val, valFont);
@@ -876,4 +894,5 @@ bool UiScreens::begin() {
     DisplayManager::setFrameCallback(&frame);
     return true;
 }
+
 
