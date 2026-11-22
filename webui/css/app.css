@@ -222,6 +222,44 @@ fieldset.group-bare{border:0;padding:0;margin:0}
 .bal-scale{display:flex;justify-content:space-between;padding:0 var(--sp-2);font-size:.8rem;color:var(--muted)}
 #eq-err,#bal-err,#bal-note{margin-top:var(--sp-3)}
 
+/* --- Еквалайзер: вертикальні повзунки в ряд (E6). Усе під .eq-vert / .eq-card / .audio-stack: інші сторінки не зачеплені.
+   Вертикальність — поворотом input[type=range] на -90° усередині блоку фіксованої висоти (працює однаково в Chrome / Firefox / Safari;
+   writing-mode для range у Safari не підтримується). Вгору = більше. --- */
+.audio-stack{display:grid;gap:var(--sp-4)}
+.eq-vert{--eqv-h:220px;--eqv-w:36px;--eqv-pad:14px;--eqv-vh:22px;--eqv-fh:20px;
+  --eqv-rows:var(--eqv-vh) 36px var(--eqv-h) 36px 36px var(--eqv-fh)}
+.eqv-scroll{overflow-x:auto;overflow-y:hidden;margin:0 -2px;padding:4px 2px}
+.eqv{display:grid;grid-template-columns:repeat(var(--eqv-n,10),minmax(28px,1fr));gap:2px}
+.eqv-col{display:grid;grid-template-rows:var(--eqv-rows);row-gap:var(--sp-1);min-width:0}
+.eqv-track{position:relative;width:100%;height:var(--eqv-h)}
+.eq-vert .eqv-input{position:absolute;left:50%;top:50%;flex:none;margin:0;width:var(--eqv-h);height:var(--eqv-w);
+  transform:translate(-50%,-50%) rotate(-90deg);touch-action:none}
+.eq-vert .btn{width:100%;min-width:0;min-height:36px;padding:0}
+.eq-vert .btn svg{width:18px;height:18px}
+.eqv-val{display:block;font-size:.78rem;line-height:var(--eqv-vh);text-align:center;white-space:nowrap}
+.eqv-freq{min-width:0;overflow:hidden;font-size:.72rem;line-height:var(--eqv-fh);color:var(--muted);text-align:center;white-space:nowrap}
+.eqv-f-long{display:none}
+.eqv-scale{display:none;grid-template-rows:var(--eqv-rows);row-gap:var(--sp-1);min-width:0}
+.eqv-scale-in{grid-row:3;position:relative;font-size:.78rem;line-height:1;color:var(--muted);text-align:right;white-space:nowrap}
+.eqv-scale-in span{position:absolute;right:0;transform:translateY(-50%)}
+.eqv-s-max{top:var(--eqv-pad)}
+.eqv-s-min{top:calc(100% - var(--eqv-pad))}
+.eqv-s-zero{top:calc(var(--eqv-pad) + (100% - 2 * var(--eqv-pad)) * var(--z,.5))}
+@media (min-width:640px){
+  .eq-vert{--eqv-w:36px}
+  .eqv{grid-template-columns:2.8em repeat(var(--eqv-n,10),minmax(32px,1fr));gap:var(--sp-2)}
+  .eqv-scale{display:grid}
+  .eqv-val{font-size:.9rem}
+  .eqv-freq{font-size:.8rem}
+  .eqv-f-long{display:inline}
+  .eqv-f-short{display:none}
+}
+@media (max-width:639px){.eq-vert{--eqv-w:28px}}
+@media (max-width:479px){
+  .eq-card{padding:var(--sp-3) var(--sp-2)}
+  .eq-card .card-head,.eq-card #eq-err{padding:0 var(--sp-2)}
+}
+
 /* --- Пульт (Prompt 22): рядки дій — це .station*, тут лише панель навчання --- */
 .ir-learn{border-color:var(--accent);margin-bottom:var(--sp-3)}
 .ir-target{font-size:1.4rem;font-weight:700;overflow-wrap:anywhere;margin:var(--sp-2) 0}
@@ -270,4 +308,3 @@ fieldset.group-bare{border:0;padding:0;margin:0}
 .in-row .param-val{flex:none;min-width:4.8em;text-align:right}
 .in-row .btn-zero{flex:none}
 .in-row>.hint{margin-top:var(--sp-1)}
-

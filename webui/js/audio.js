@@ -1,6 +1,7 @@
 'use strict';
-/* Сторінка «Аудіо» (P51b, E2b): еквалайзер (кількість смуг — з відповіді /api/eq) і баланс ДЛЯ КОЖНОГО з 3 входів.
+/* Сторінка «Аудіо» (P51b, E2b, E6): еквалайзер (кількість смуг — з відповіді /api/eq) і баланс ДЛЯ КОЖНОГО з 3 входів.
    Залежить від common.js і nav.js. Контракт: web_api.md §11 (/api/eq), §13 (/api/balance), §1.3 (профілі входів).
+   E6: смуги EQ — вертикальні повзунки в ряд (стовпчик на смугу; розкладка лише в CSS, область .eq-vert).
    Вкладка вибирає лише профіль для редагування — вхід на пристрої НЕ перемикається.
    Для кожного входу створено власний набір повзунків (createSlider): відкладена відправка з повзунка
    ніколи не потрапить у профіль іншого входу після перемикання вкладки. */
@@ -26,6 +27,8 @@
   // 50 → «50 Гц», 1000 → «1 кГц», 2800 → «2,8 кГц», 10000 → «10 кГц»: десяткова кома, без зайвих нулів
   const fmtNum = (v) => String(parseFloat(v.toFixed(2))).replace('.', ',');
   const fmtFreq = (f) => (f >= 1000 ? fmtNum(f / 1000) + ' кГц' : fmtNum(f) + ' Гц');
+  // Короткий підпис для вузьких екранів: 50 → «50», 2800 → «2,8k», 15000 → «15k»
+  const fmtFreqShort = (f) => (f >= 1000 ? fmtNum(f / 1000) + 'k' : fmtNum(f));
   const bandsText = (n) => {                       // «8 смуг», «1 смуга», «3 смуги»
     const m10 = n % 10, m100 = n % 100;
     return n + ' ' + (m10 === 1 && m100 !== 11 ? 'смуга' : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? 'смуги' : 'смуг');
@@ -56,40 +59,66 @@
   }
 
   /* ---------- Побудова повзунків (по набору на кожен вхід) ---------- */
-  // Рядок однієї смуги EQ. Кількість рядків залежить від відповіді /api/eq (syncRows), а не від константи.
+  // Стовпчик однієї смуги EQ (зверху вниз: значення, «+», повзунок, «−», «0», частота).
+  // Кількість стовпчиків залежить від відповіді /api/eq (syncRows), а не від константи.
   function buildRow(i, b) {
-    const input = el('input', { class: 'slider slider-c', type: 'range', min: CONFIG.eqMinDb, max: CONFIG.eqMaxDb,
-      step: CONFIG.eqStepDb, value: 0, 'aria-label': 'Смуга ' + (b + 1) });
-    const title = el('span', null, 'Смуга ' + (b + 1));
-    const val = el('output', { class: 'param-val num' }, fmtDb(0));
-    const r = { b, input, title, val };
+    const input = el('input', { class: 'slider slider-c eqv-input', type: 'range', min: CONFIG.eqMinDb, max: CONFIG.eqMaxDb,
+      step: CONFIG.eqStepDb, value: 0, 'aria-label': 'Смуга ' + (b + 1), 'aria-orientation': 'vertical' });
+    const fLong = el('span', { class: 'eqv-f eqv-f-long', 'aria-hidden': 'true' }, 'Смуга ' + (b + 1));
+    const fShort = el('span', { class: 'eqv-f eqv-f-short', 'aria-hidden': 'true' }, String(b + 1));
+    const val = el('output', { class: 'param-val num eqv-val', 'aria-hidden': 'true' }, fmtSigned(0));
+    const r = { b, input, fLong, fShort, val };
+    // Значення на екрані без одиниці («+8»), для скрінрідерів — «+8 дБ»
+    const showVal = (v) => { setText(val, fmtSigned(v)); setAttr(input, 'aria-valuetext', fmtDb(v)); };
+    r.show = showVal;
     r.ctl = createSlider(input, {
       send: async (v) => { applyEq(i, await api.setEq({ band: b, gainDb: v }, i)); },
-      onInput: (v) => setText(val, fmtDb(v)),
+      onInput: showVal,
       onFail: () => renderPanel(i),
     });
     r.set = (v) => {
       v = clamp(v, Number(input.min), Number(input.max));
-      input.value = v; setText(val, fmtDb(v));
+      input.value = v; showVal(v);
       r.ctl.send(v);
     };
     const step = () => Number(input.step) || 1;
-    r.row = el('div', { class: 'param' },
-      el('div', { class: 'param-head' }, title, val),
-      el('div', { class: 'param-row' },
-        iconBtn('minus', 'Менше', () => r.set(Number(input.value) - step())),
-        input,
-        iconBtn('plus', 'Більше', () => r.set(Number(input.value) + step())),
-        el('button', { class: 'btn btn-zero', type: 'button', 'aria-label': 'Скинути смугу', onclick: () => r.set(0) }, '0')));
+    r.plus = iconBtn('plus', 'Більше', () => r.set(Number(input.value) + step()));
+    r.minus = iconBtn('minus', 'Менше', () => r.set(Number(input.value) - step()));
+    r.zero = el('button', { class: 'btn btn-zero', type: 'button', 'aria-label': 'Скинути смугу', onclick: () => r.set(0) }, '0');
+    r.row = el('div', { class: 'eqv-col' },
+      val,
+      r.plus,
+      el('div', { class: 'eqv-track' }, input),
+      r.minus,
+      r.zero,
+      el('div', { class: 'eqv-freq' }, fLong, fShort));
     return r;
   }
-  // Приводить кількість рядків входу i до n (змінюється лише коли n інше; старі повзунки відпускаються).
+  // Шкала зліва (+max / 0 / −min); показується лише на широких екранах (CSS).
+  function buildScale() {
+    const max = el('span', { class: 'eqv-s-max' }, '');
+    const zero = el('span', { class: 'eqv-s-zero' }, '0');
+    const min = el('span', { class: 'eqv-s-min' }, '');
+    return { node: el('div', { class: 'eqv-scale', 'aria-hidden': 'true' }, el('div', { class: 'eqv-scale-in' }, max, zero, min)), max, zero, min };
+  }
+  // Приводить кількість стовпчиків входу i до n (змінюється лише коли n інше; старі повзунки відпускаються).
   function syncRows(i, n) {
     const eq = panels[i].eq;
     if (eq.rows.length === n) return;
     eq.rows.forEach((r) => r.ctl.release());
     eq.rows = Array.from({ length: n }, (_, b) => buildRow(i, b));
-    eq.set.replaceChildren(eq.legend, ...eq.rows.map((r) => r.row));
+    eq.scale = buildScale();
+    const grid = el('div', { class: 'eqv', style: '--eqv-n:' + n }, eq.scale.node, ...eq.rows.map((r) => r.row));
+    eq.set.replaceChildren(eq.legend, el('div', { class: 'eqv-scale-wrap eqv-scroll' }, grid));
+  }
+  // Підписи шкали: угорі +maxDb, внизу minDb, «0» на своєму місці між ними.
+  function updateScale(eq, d) {
+    if (!eq.scale) return;
+    setText(eq.scale.max, fmtSigned(d.maxDb));
+    setText(eq.scale.min, fmtSigned(d.minDb));
+    const frac = d.maxDb / (d.maxDb - d.minDb);          // частка висоти від верху до нуля
+    eq.scale.zero.hidden = !(frac > 0.1 && frac < 0.9);
+    setAttr(eq.scale.zero, 'style', '--z:' + frac.toFixed(4));
   }
 
   function buildPanel(i) {
@@ -126,7 +155,7 @@
     const balBox = el('div', { class: 'in-panel', hidden: true }, balSet);
     ui.balPanels.append(balBox);
 
-    return { eq: { box: eqBox, fs: eqSet, set: eqSet, legend: eqLegend, rows: [] }, bal: Object.assign(bal, { box: balBox }) };
+    return { eq: { box: eqBox, fs: eqSet, set: eqSet, legend: eqLegend, rows: [], scale: null }, bal: Object.assign(bal, { box: balBox }) };
   }
   for (let i = 0; i < INPUTS; i++) panels.push(buildPanel(i));
 
@@ -198,10 +227,15 @@
         setAttr(r.input, 'step', c.eq.stepDb);
         const f = c.eq.freqHz ? c.eq.freqHz[r.b] : null;      // немає частот у відповіді — «Смуга N»
         const label = isNum(f) ? fmtFreq(f) : 'Смуга ' + (r.b + 1);
-        setText(r.title, label);
-        setAttr(r.input, 'aria-label', 'Еквалайзер ' + label);
-        if (!r.ctl.held()) { r.input.value = c.eq.gainsDb[r.b]; setText(r.val, fmtDb(c.eq.gainsDb[r.b])); }
+        setText(r.fLong, label);
+        setText(r.fShort, isNum(f) ? fmtFreqShort(f) : String(r.b + 1));
+        setAttr(r.input, 'aria-label', 'Еквалайзер ' + label + ', дБ');
+        setAttr(r.plus, 'aria-label', 'Збільшити: ' + label);
+        setAttr(r.minus, 'aria-label', 'Зменшити: ' + label);
+        setAttr(r.zero, 'aria-label', 'Скинути смугу ' + label);
+        if (!r.ctl.held()) { r.input.value = c.eq.gainsDb[r.b]; r.show(c.eq.gainsDb[r.b]); }
       });
+      updateScale(p.eq, c.eq);
     }
 
     p.bal.fs.disabled = c.bal === null || balLocked(i);
@@ -266,7 +300,7 @@
     });
 
     const sel = selected, name = nameOf(sel);
-    setText(ui.eqCount, prof[sel].eq ? bandsText(prof[sel].eq.gainsDb.length) : '');
+    setText(ui.eqCount, prof[sel].eq ? bandsText(prof[sel].eq.gainsDb.length) + ' · дБ' : '');
     setText(ui.scope, sel === st.input
       ? 'Зараз грає цей вхід: зміни чути одразу. Значення зберігаються в профілі входу «' + name + '».'
       : 'Редагується лише профіль входу «' + name + '»: звук не зміниться, доки ви не перемкнетесь на цей вхід. Зараз грає «' + nameOf(st.input) + '».');
