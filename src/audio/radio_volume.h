@@ -40,4 +40,9 @@ bool isSilent();
 // Лише з хука: множення інтерліврованого стерео-блоку int32 на місці.
 void process(int32_t* buf, int32_t frames);
 
+// [E3] Те саме на float-буфері (L,R,L,R...) НА МІСЦІ, БЕЗ насичення (його робить хук один раз після цього кроку).
+// Гучність, мʼют, баланс і ramp — ті самі, що в process() (спільний стан DspVolume). Лише з хука.
+void processFloat(float* buf, int32_t frames);
+
 }  // namespace radio_volume
+

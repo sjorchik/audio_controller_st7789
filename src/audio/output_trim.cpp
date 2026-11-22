@@ -44,6 +44,9 @@ volatile int8_t s_targetDb = static_cast<int8_t>(lc::kDefaultStationLevelDb);
 // setTargetDb() звук не буде гучнішим за типовий.
 int32_t s_curGain = kGainQ16[lc::kDefaultStationLevelDb - lc::kLevelMinDb];
 
+// [E3] Q16 -> float: множення на степінь двійки, точне.
+constexpr float kInvQ16 = 1.0f / 65536.0f;
+
 inline int32_t scale(int32_t s, int32_t g) {
     // |s| <= 2^31, g <= 2^16: добуток у int64, округлення до найближчого; результат у межах int32.
     return static_cast<int32_t>((static_cast<int64_t>(s) * g + (1 << 15)) >> 16);
@@ -92,6 +95,43 @@ void output_trim::process(int32_t* buf, int32_t frames) {
         }
         p[0] = scale(p[0], cur);
         p[1] = scale(p[1], cur);
+        p += 2;
+    }
+    s_curGain = cur;
+}
+
+// [E3] Float-варіант: та сама логіка (0 дБ без переходу = блок не чіпаємо; усталений рівень; лінійний перехід
+// у Q16 за кадр), але без цілочисельного округлення. Стан s_curGain спільний із process().
+void output_trim::processFloat(float* buf, int32_t frames) {
+    if (buf == nullptr || frames <= 0) {
+        return;
+    }
+    int32_t cur = s_curGain;
+    const int32_t tgt = s_targetGain;
+    if (cur == tgt && cur >= kUnity) {
+        return;  // 0 дБ і без переходу: блок не чіпаємо
+    }
+    float* p = buf;
+    if (cur == tgt) {
+        const float g = static_cast<float>(cur) * kInvQ16;
+        for (int32_t i = 0; i < frames; ++i) {
+            p[0] *= g;
+            p[1] *= g;
+            p += 2;
+        }
+        return;
+    }
+    for (int32_t i = 0; i < frames; ++i) {
+        if (cur < tgt) {
+            cur += kStepQ16;
+            if (cur > tgt) cur = tgt;
+        } else if (cur > tgt) {
+            cur -= kStepQ16;
+            if (cur < tgt) cur = tgt;
+        }
+        const float g = static_cast<float>(cur) * kInvQ16;
+        p[0] *= g;
+        p[1] *= g;
         p += 2;
     }
     s_curGain = cur;

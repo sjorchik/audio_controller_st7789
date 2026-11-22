@@ -49,3 +49,8 @@ bool radio_volume::isSilent() {
 void radio_volume::process(int32_t* buf, int32_t frames) {
     s_vol.process(buf, frames);
 }
+
+// [E3] Float-шлях: DspVolume::processFloat (той самий ramp, баланс після гучності, без насичення).
+void radio_volume::processFloat(float* buf, int32_t frames) {
+    s_vol.processFloat(buf, frames);
+}

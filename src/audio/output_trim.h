@@ -25,4 +25,9 @@ int8_t targetDb();
 // frames — кількість стереокадрів (пар L,R).
 void process(int32_t* buf, int32_t frames);
 
+// [E3] Те саме на float-буфері (L,R,L,R...) НА МІСЦІ, без насичення й без округлення: той самий коефіцієнт і
+// той самий лінійний перехід (стан спільний із process()), шкала буфера довільна. Лише з хука.
+void processFloat(float* buf, int32_t frames);
+
 }  // namespace output_trim
+
