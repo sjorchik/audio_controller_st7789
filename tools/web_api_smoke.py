@@ -21,6 +21,8 @@
 /api/power (standby), реальні factory-reset / wifi-reset.
 
 Оновлено в P50a: без processor / gain / тембру; додано GET /api/balance, menuContext, 3 входи.
+Оновлено в E2c: GET /api/eq (кількість смуг = len(freqHz), межі з minDb / maxDb / stepDb, без зашитих 5 / 8 / 10 і ±12 / ±18);
+з --write - зміна смуги й масиву з поверненням пресету (активний і неактивний вхід), негативні випадки POST /api/eq.
 Оновлено у V2: GET /api/vu, status.vuSens; з --write — чутливість VU активного й неактивного входу (зміна й повернення),
 негативні випадки POST /api/vu (value поза діапазоном, невідомий ключ, input = 3).
 
@@ -114,6 +116,130 @@ def expect(name, got, want_status, want_keys=None, want_error=None):
 
 
 # --------------------------------------------------------------------------
+# E2c: перевірки еквалайзера. Кількість смуг = len(freqHz), межі = minDb / maxDb, крок = stepDb
+# (усе з відповіді GET /api/eq; значення 5 / 8 / 10 смуг чи ±12 / ±18 дБ у скрипті НЕ зашиті).
+# --------------------------------------------------------------------------
+def _is_int(x):
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def eq_shape_problem(eq):
+    """None, якщо відповідь GET /api/eq коректна за формою; інакше текст проблеми."""
+    if not has_keys(eq, ["gainsDb", "freqHz", "minDb", "maxDb", "stepDb"]):
+        return "немає полів gainsDb / freqHz / minDb / maxDb / stepDb"
+    g, f = eq["gainsDb"], eq["freqHz"]
+    if not (isinstance(g, list) and isinstance(f, list)) or not f:
+        return "gainsDb / freqHz мають бути непорожніми масивами"
+    if len(g) != len(f):
+        return "len(gainsDb)=%d != len(freqHz)=%d" % (len(g), len(f))
+    if not all(_is_int(x) for x in g + f):
+        return "gainsDb / freqHz мають складатися з цілих"
+    if f[0] <= 0 or any(f[i - 1] >= f[i] for i in range(1, len(f))):
+        return "freqHz має строго зростати й бути додатним: %s" % f
+    mn, mx, stp = eq["minDb"], eq["maxDb"], eq["stepDb"]
+    if not all(_is_int(x) for x in (mn, mx, stp)) or not (mn < 0 < mx) or stp < 1:
+        return "minDb / maxDb / stepDb: %r / %r / %r" % (mn, mx, stp)
+    if any(not (mn <= x <= mx) for x in g):
+        return "gainsDb поза minDb..maxDb: %s" % g
+    return None
+
+
+def eq_negative_checks(d):
+    """Негативні POST /api/eq (валідація йде до застосування; тіла надсилають поточні значення, тож навіть
+    помилкове прийняття не змінило б пресет, окрім випадків, які саме й перевіряються)."""
+    status, e0 = d.get("/api/eq")
+    problem = eq_shape_problem(e0) if status == 200 else "HTTP %s" % status
+    if problem:
+        record("eq: негативні перевірки", False, "немає коректного GET /api/eq: %s" % problem, skip=True)
+        return
+    n, mn, mx = len(e0["freqHz"]), e0["minDb"], e0["maxDb"]
+    flat = list(e0["gainsDb"])
+    expect("POST /api/eq {input:0} (без gainsDb / band) -> 400 missing_field", d.post("/api/eq", {"input": 0}), 400,
+           ["error"], "missing_field")
+    expect("POST /api/eq unknown field -> 400", d.post("/api/eq", {"band": 0, "gainDb": flat[0], "x": 1}), 400,
+           ["error"], "unknown_field")
+    expect("POST /api/eq gainsDb + band -> 400 conflicting_fields",
+           d.post("/api/eq", {"gainsDb": flat, "band": 0, "gainDb": flat[0]}), 400, ["error"], "conflicting_fields")
+    for bad_len, body_arr in ((n - 1, flat[:-1]), (n + 1, flat + [flat[-1]])):
+        if bad_len < 1:
+            continue
+        status, body = d.post("/api/eq", {"gainsDb": body_arr})
+        record("POST /api/eq gainsDb довжини %d (смуг %d) -> 400 invalid_value, field=gainsDb" % (bad_len, n),
+               status == 400 and isinstance(body, dict) and body.get("error") == "invalid_value" and
+               body.get("field") == "gainsDb", "HTTP %s %s" % (status, str(body)[:80]))
+    for label, lim_val, post_body in (
+            ("band, gainDb=%d (maxDb+1)" % (mx + 1), mx + 1, {"band": 0, "gainDb": mx + 1}),
+            ("band, gainDb=%d (minDb-1)" % (mn - 1), mn - 1, {"band": 0, "gainDb": mn - 1}),
+            ("gainsDb[0]=%d (maxDb+1)" % (mx + 1), mx + 1, {"gainsDb": [mx + 1] + [None] * (n - 1)})):
+        status, body = d.post("/api/eq", post_body)
+        record("POST /api/eq %s -> 400 out_of_range, min/max == GET (%d/%d)" % (label, mn, mx),
+               status == 400 and isinstance(body, dict) and body.get("error") == "out_of_range" and
+               body.get("min") == mn and body.get("max") == mx, "HTTP %s %s" % (status, str(body)[:100]))
+    for bad_band in (n, -1):
+        status, body = d.post("/api/eq", {"band": bad_band, "gainDb": flat[0]})
+        record("POST /api/eq band=%d (смуг %d) -> 400 out_of_range, field=band, min/max == 0/%d" % (bad_band, n, n - 1),
+               status == 400 and isinstance(body, dict) and body.get("error") == "out_of_range" and
+               body.get("field") == "band" and body.get("min") == 0 and body.get("max") == n - 1,
+               "HTTP %s %s" % (status, str(body)[:100]))
+    expect("POST /api/eq gainDb=1.5 -> 400 invalid_value", d.post("/api/eq", {"band": 0, "gainDb": 1.5}), 400,
+           ["error"], "invalid_value")
+    status, body = d.post("/api/eq", {"band": 0, "gainDb": flat[0], "input": INPUT_COUNT})
+    record("POST /api/eq input=%d -> 400 out_of_range, field=input, min/max == 0/%d" % (INPUT_COUNT, INPUT_COUNT - 1),
+           status == 400 and isinstance(body, dict) and body.get("error") == "out_of_range" and
+           body.get("field") == "input" and body.get("min") == 0 and body.get("max") == INPUT_COUNT - 1,
+           "HTTP %s %s" % (status, str(body)[:100]))
+
+
+def eq_roundtrip(d, label, input_idx):
+    """Зміна смуги, масиву й масиву з null з ПОВЕРНЕННЯМ початкового пресету. input_idx None = активний вхід."""
+    q = "" if input_idx is None else "?input=%d" % input_idx
+    extra = {} if input_idx is None else {"input": input_idx}
+    status, e0 = d.get("/api/eq" + q)
+    problem = eq_shape_problem(e0) if status == 200 else "HTTP %s" % status
+    if problem:
+        record("eq (%s): зміна й повернення" % label, False, "немає коректного GET /api/eq%s: %s" % (q, problem),
+               skip=True)
+        return
+    n, mn, mx, stp = len(e0["freqHz"]), e0["minDb"], e0["maxDb"], e0["stepDb"]
+    g0 = list(e0["gainsDb"])
+    tag = "eq (%s)" % label
+    keys = ["input", "gainsDb", "freqHz", "minDb", "maxDb", "stepDb"]
+    band = n // 2
+    g1 = g0[band] + stp if g0[band] + stp <= mx else g0[band] - stp
+    try:
+        ok, b = expect("POST /api/eq {band:%d, gainDb:%d} (%s, смуг %d)" % (band, g1, label, n),
+                       d.post("/api/eq", dict(extra, band=band, gainDb=g1)), 200, keys)
+        want1 = list(g0)
+        want1[band] = g1
+        if ok:
+            record("%s: відповідь змінила лише смугу %d" % (tag, band), b["gainsDb"] == want1 and
+                   b["input"] == e0["input"] and len(b["freqHz"]) == n, str(b)[:100])
+        status, now = d.get("/api/eq" + q)
+        record("%s: GET після зміни смуги" % tag, status == 200 and now.get("gainsDb") == want1, str(now)[:100])
+
+        g2 = [x + stp if x + stp <= mx else x - stp for x in g0]
+        ok, b = expect("POST /api/eq {gainsDb:[%d]} (%s)" % (n, label),
+                       d.post("/api/eq", dict(extra, gainsDb=g2)), 200, keys)
+        if ok:
+            record("%s: gainsDb відповіді == надісланому масиву" % tag, b["gainsDb"] == g2, str(b)[:100])
+
+        part = [None] * n
+        part[0] = g0[0]
+        want3 = list(g2)
+        want3[0] = g0[0]
+        ok, b = expect("POST /api/eq {gainsDb: null усюди, крім смуги 0} (%s)" % label,
+                       d.post("/api/eq", dict(extra, gainsDb=part)), 200, keys)
+        if ok:
+            record("%s: null = смуга не змінюється" % tag, b["gainsDb"] == want3, str(b)[:100])
+    finally:
+        expect("POST /api/eq повернути початковий пресет (%s)" % label,
+               d.post("/api/eq", dict(extra, gainsDb=g0)), 200, ["gainsDb"])
+        status, now = d.get("/api/eq" + q)
+        record("%s: після повернення пресет == початковий" % tag, status == 200 and now.get("gainsDb") == g0,
+               str(now)[:100])
+
+
+# --------------------------------------------------------------------------
 # Безпечні GET-перевірки
 # --------------------------------------------------------------------------
 def read_checks(d):
@@ -190,6 +316,33 @@ def read_checks(d):
                 record("vu: inputs[active].sensitivityDb == status.vuSens",
                        vins[st["input"]]["sensitivityDb"] == st["vuSens"],
                        "%s vs %s" % (vins[st["input"]]["sensitivityDb"], st["vuSens"]))
+
+    # --- GET /api/eq (E2c): кількість смуг і межі беремо з відповіді, у скрипті нічого не зашито ---
+    ok_e, eq = expect("GET /api/eq (активний вхід)", d.get("/api/eq"), 200,
+                      ["input", "gainsDb", "freqHz", "minDb", "maxDb", "stepDb"])
+    if ok_e:
+        problem = eq_shape_problem(eq)
+        record("eq: форма відповіді (len(gainsDb) == len(freqHz), частоти зростають, межі, крок)", problem is None,
+               problem or "%d смуг, %d..%d дБ, крок %d" % (len(eq["freqHz"]), eq["minDb"], eq["maxDb"], eq["stepDb"]))
+        if ok:
+            record("eq: input == status.input", eq["input"] == st["input"], "%s vs %s" % (eq["input"], st["input"]))
+    for n in range(INPUT_COUNT):
+        okn, en = expect("GET /api/eq?input=%d" % n, d.get("/api/eq?input=%d" % n), 200,
+                         ["input", "gainsDb", "freqHz", "minDb", "maxDb", "stepDb"])
+        if okn:
+            problem = eq_shape_problem(en)
+            record("eq?input=%d: input == %d, форма коректна" % (n, n), en["input"] == n and problem is None,
+                   problem or str(en)[:100])
+            if ok_e and problem is None and eq_shape_problem(eq) is None:
+                record("eq?input=%d: freqHz / minDb / maxDb / stepDb як в активного входу" % n,
+                       all(en[k] == eq[k] for k in ("freqHz", "minDb", "maxDb", "stepDb")), str(en)[:100])
+    status, body = d.get("/api/eq?input=%d" % INPUT_COUNT)
+    record("GET /api/eq?input=%d -> 400 out_of_range" % INPUT_COUNT,
+           status == 400 and isinstance(body, dict) and body.get("error") == "out_of_range" and
+           body.get("field") == "input" and body.get("min") == 0 and body.get("max") == INPUT_COUNT - 1,
+           "HTTP %s %s" % (status, str(body)[:80]))
+    expect("GET /api/eq?input=-1 -> 400", d.get("/api/eq?input=-1"), 400, ["error"], "out_of_range")
+    expect("GET /api/eq?input=x -> 400", d.get("/api/eq?input=x"), 400, ["error"], "invalid_value")
 
     # --- видалені маршрути ---
     expect("GET /api/gain -> 404", d.get("/api/gain"), 404, ["error"], "not_found")
@@ -287,6 +440,8 @@ def write_checks(d, st, args):
            status == 400 and isinstance(body, dict) and body.get("field") == "value" and
            body.get("min") == VU_MIN and body.get("max") == VU_MAX, "HTTP %s %s" % (status, str(body)[:80]))
 
+    eq_negative_checks(d)
+
     vmin, vmax = VOLUME_MIN, VOLUME_MAX
     expect("POST /api/volume above max -> 400", d.post("/api/volume", {"value": vmax + 1}), 400, ["error", "min", "max"],
            "out_of_range")
@@ -335,6 +490,10 @@ def write_checks(d, st, args):
                d.post("/api/vu", {"value": u0, "input": vu_other}), 200, ["input", "sensitivityDb"])
     else:
         record("vu неактивного входу", False, "не вдалося прочитати", skip=True)
+
+    # --- E2c: EQ, зміна й ПОВЕРНЕННЯ (гейтиться лише OTA, тож працює й у standby) ---
+    eq_roundtrip(d, "активний вхід", None)
+    eq_roundtrip(d, "неактивний вхід", other)
 
     if standby:
         record("volume/mute/balance(активний) зміни", False, "пристрій у standby (очікувано 409)", skip=True)

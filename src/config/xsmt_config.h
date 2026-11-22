@@ -26,7 +26,7 @@ constexpr uint32_t kMuteLeadMs = 20;
 // Пауза між стабільним клоком I2S0 і XSMT HIGH. Радіо: відлік від останньої зміни Audio::getSampleRate()
 // (і не раніше стану Playing). Прохід: від застосування 48 кГц на I2S0 (раніше: 20 мс + 6 settle-блоків
 // ≈ 16 мс). Гіпотеза: 40 мс (час захоплення PLL ЦАП + запас).
-constexpr uint32_t kClockSettleMs = 40;
+constexpr uint32_t kClockSettleMs = 600;
 
 // Пауза між XSMT HIGH і зняттям ЦИФРОВОГО мʼюту проходу (DspVolume). Лише для проходу: цифровим мʼютом
 // радіо (radio_volume) керує AppController, плеєр його не чіпає. Гіпотеза: 10 мс (≈ 2× рампа unmute ЦАП).
