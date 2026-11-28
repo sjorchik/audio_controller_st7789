@@ -214,6 +214,7 @@
 #include "config/app_controller_config.h"
 #include "config/defaults.h"
 #include "config/eq_screen_config.h"  // [Prompt 49a] таймаут / крок / вибір екрана «EQ + баланс»
+#include "config/station_list_config.h"   // [L1] station_list_cfg::kTimeoutMs (автозакриття списку станцій)
 #include "config/features.h"  // [Prompt 23c]
 #include "config/input_selector_config.h"  // [Prompt 48a] kRelaySettleMs
 #include "config/ir_learn_ui_config.h"  // [Prompt 15] ДОДАНО
@@ -312,6 +313,7 @@ uint8_t s_popupSeq = 0;
 bool s_popupDismissed = false;  // [Prompt 49d] true: UI має негайно сховати вікно (рівень, див. AppStateData::popupDismissed)
 MenuContext s_menuCtx = MenuContext::None;
 uint16_t s_menuSel = 0;
+uint32_t s_listLastActionMs = 0;  // [L1] момент останньої дії у списку станцій (автозакриття station_list_cfg::kTimeoutMs)
 
 Phase s_phase = Phase::None;
 uint32_t s_phaseStartMs = 0;
@@ -1966,6 +1968,7 @@ void openStationList() {
     s_menuCtx = MenuContext::StationList;
     s_menuSel = s_station;
     s_mode = Mode::Menu;
+    s_listLastActionMs = millis();  // [L1]
     APP_LOG("list open sel=%u\n", static_cast<unsigned>(s_menuSel));
 }
 
@@ -2005,6 +2008,9 @@ void selectFromList() {
 
 // --- Обробники подій -------------------------------------------------------
 void handleMenuEvent(const Event& e) {
+    if (s_menuCtx == MenuContext::StationList) {
+        s_listLastActionMs = millis();  // [L1] будь-яка дія у списку перезапускає таймер автозакриття
+    }
     const int step = (e.delta > 0) ? e.delta : 1;
     switch (e.action) {
         case Action::UP:      moveListSelection(-1); break;
@@ -2592,6 +2598,15 @@ void tickLocked() {
     // енкодера P31 / P48b прибрано: ціль завжди Volume; константа kAdjustTimeoutMs видалена в P48c.)
     if (eqOpen() && static_cast<uint32_t>(now - s_eqLastActionMs) >= eq_screen_cfg::kTimeoutMs) {
         closeEq("timeout");
+        publishState();
+    }
+
+    // [L1] Список станцій: автозакриття після station_list_cfg::kTimeoutMs без дій. Той самий вихід, що й «назад»
+    // (closeStationList()); станція не змінюється й не запускається. Різниця зі знаком: захист від now < останньої дії.
+    if (s_mode == Mode::Menu && s_menuCtx == MenuContext::StationList &&
+        static_cast<int32_t>(now - s_listLastActionMs) >= static_cast<int32_t>(station_list_cfg::kTimeoutMs)) {
+        APP_LOG("list timeout\n");
+        closeStationList();
         publishState();
     }
 

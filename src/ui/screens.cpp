@@ -497,6 +497,46 @@ void drawExternal(const AppStateData& s, int vuLitL, int vuLitR, int peakL, int 
     drawVu(vuLitL, vuLitR, peakL, peakR);
 }
 
+// [L1] Збережений зсув вікна списку станцій (перший видимий індекс). Раніше «first» рахувався з індексу вибору
+// («вибраний рядок завжди внизу»), тому при русі ВГОРУ курсор лишався на нижньому рядку, а список зсувався.
+// Тепер: sel змінюється; якщо sel < first -> first = sel; якщо sel > first + rows - 1 -> first = sel - rows + 1;
+// інакше first не змінюється. Початок (перший кадр після відкриття): як було — вибір видно, «прилипає» до низу.
+// Скидається в listWindowReset() на кожному кадрі, де список НЕ на екрані. Лише візуальний стан (не AppStateData).
+bool s_listFirstValid = false;
+uint16_t s_listFirst = 0;
+
+void listWindowReset() {
+    s_listFirstValid = false;
+}
+
+uint16_t listWindowFirst(uint16_t selIn, size_t count, uint8_t rows) {
+    if (count <= rows) {            // список коротший за вікно: прокрутки немає
+        s_listFirst = 0;
+        s_listFirstValid = true;
+        return 0;
+    }
+    const int cnt = static_cast<int>(count);
+    const int r = static_cast<int>(rows);
+    const int sel = (selIn >= count) ? (cnt - 1) : static_cast<int>(selIn);   // список міг скоротитись
+    const int maxFirst = cnt - r;
+    int first;
+    if (!s_listFirstValid) {
+        first = (sel >= r) ? (sel - r + 1) : 0;
+    } else {
+        first = static_cast<int>(s_listFirst);
+        if (first > maxFirst) first = maxFirst;
+        if (first < 0) first = 0;
+        if (sel < first) {
+            first = sel;
+        } else if (sel > first + r - 1) {
+            first = sel - r + 1;
+        }
+    }
+    s_listFirst = static_cast<uint16_t>(first);
+    s_listFirstValid = true;
+    return s_listFirst;
+}
+
 void drawStationList(const AppStateData& s) {
     D::drawText("Stations", c::kMargin, c::kListTitleY, FontSize::Small, c::kColorDim);
     D::drawLine(0, c::kListLineY, c::kW - 1, c::kListLineY, c::kColorDim);
@@ -510,7 +550,7 @@ void drawStationList(const AppStateData& s) {
 
     const int32_t maxW = c::kW - c::kListTextX - c::kMargin;
     const uint16_t sel = s.menuSelection;
-    const uint16_t first = (sel >= c::kListRows) ? static_cast<uint16_t>(sel - c::kListRows + 1) : 0;
+    const uint16_t first = listWindowFirst(sel, count, c::kListRows);   // [L1] було: sel >= kListRows ? sel - kListRows + 1 : 0
     Station st;
     char text[sizeof(Station::name) + 8];
     for (uint8_t i = 0; i < c::kListRows; ++i) {
@@ -868,6 +908,8 @@ bool frame() {
         case Mode::OtaUpdate:     drawOtaUpdate(s);              break;   // [Prompt 16]
         default:                  drawPlaceholder("?");          break;
     }
+    // [L1] Список станцій не на екрані — наступне відкриття почнеться з початкового положення вікна.
+    if (!(s.mode == Mode::Menu && s.menuContext == MenuContext::StationList)) listWindowReset();
     if (s_popupActive) drawPopup(s);   // [Prompt 32] останній шар кадру
     return true;
 }
